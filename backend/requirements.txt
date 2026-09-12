@@ -1,0 +1,22 @@
+fastapi
+uvicorn[standard]
+pydantic
+pydantic-settings
+python-multipart
+python-dotenv
+google-genai
+groq
+pillow
+numpy
+torch
+segmentation-models-pytorch
+transformers
+accelerate
+rasterio
+earthengine-api
+requests
+pytest
+httpx
+
+# Grounding DINO (models/grounding/) is NOT pip-installable -- it's a git clone + local install.
+# See CLAUDE.md / models/grounding/grounding_tool.py's Setup docstring.
