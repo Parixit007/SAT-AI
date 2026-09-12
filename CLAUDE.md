@@ -56,6 +56,17 @@ running real queries — without one, `/api/query` returns a clean 503, not a cr
 `groundwater_potential` tool — see GEE section below); registering that tool always works, running
 it without these set raises a clean "not configured" 503 too.
 
+## Git workflow
+
+The user has authorized standing auto-commit + auto-push on this repo (2026-09-12): commit and
+push to `origin main` after each coherent, working change (a finished feature, fix, or file
+addition — not after every single edit) without stopping to ask first. Still review `git status` /
+`git diff --cached` before each commit for anything that looks like a secret even though
+`.gitignore` already excludes `.env`, `secrets/`, model checkpoints, `data/raw`, `data/uploads`,
+and `data/evidence` — that list doesn't catch a real key accidentally pasted into `.env.example`,
+for instance. Still stop and flag rather than pushing through a merge conflict or anything needing
+`--force`. The GitHub remote is public, by the user's own choice.
+
 ## Orchestrator architecture (`backend/app/`)
 
 Per-query flow — deterministic Python owns validation/execution/trace; the LLM owns exactly one
