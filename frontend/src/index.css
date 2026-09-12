@@ -1,0 +1,70 @@
+:root {
+  /* Base -- a cold, desaturated slate-navy, not flat neutral black. Evokes a telemetry/radar
+     display rather than a generic "dark mode app." */
+  --ground: #0a0f1a;
+  --surface: #10182a;
+  --surface-raised: #16203572;
+  --border: #26324a;
+  --border-strong: #3a4968;
+
+  --text: #c6cede;
+  --text-dim: #7c88a6;
+  --text-bright: #eef1f8;
+
+  /* Semantic accents, drawn from real remote-sensing conventions -- each one means something
+     specific in this app (land/vegetation, water, moderate/caution, alert/low-confidence), not
+     one arbitrary brand color reused everywhere. */
+  --land: #5fb88c;
+  --land-dim: #5fb88c26;
+  --water: #4fa8d8;
+  --water-dim: #4fa8d826;
+  --caution: #d9a441;
+  --caution-dim: #d9a44126;
+  --alert: #d9614f;
+  --alert-dim: #d9614f26;
+
+  --display: "Space Grotesk", "Inter", system-ui, sans-serif;
+  --body: "Inter", system-ui, sans-serif;
+  --data: "JetBrains Mono", ui-monospace, "SF Mono", monospace;
+
+  color-scheme: dark;
+  color: var(--text);
+  background: var(--ground);
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  font: 15px/1.55 var(--body);
+  background: var(--ground);
+}
+
+#root {
+  min-height: 100svh;
+}
+
+h1,
+h2,
+h3 {
+  font-family: var(--display);
+  font-weight: 600;
+  color: var(--text-bright);
+  margin: 0;
+}
+
+p {
+  margin: 0;
+}
+
+button,
+input,
+textarea {
+  font-family: inherit;
+}

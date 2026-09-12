@@ -1,0 +1,39 @@
+# Model checkpoints (large binaries — documented as external downloads, not committed)
+models/*/checkpoints/
+*.pth
+*.pt
+*.ckpt
+*.safetensors
+
+# Datasets
+data/raw/
+
+# Runtime-generated (uploaded inputs, rendered evidence images) -- not source content
+data/uploads/
+data/evidence/
+!data/uploads/.gitkeep
+!data/evidence/.gitkeep
+
+# Pytest cache
+.pytest_cache/
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+*.egg-info/
+
+# Env / secrets
+.env
+.env.*
+!.env.example
+secrets/
+
+# Node / frontend
+frontend/node_modules/
+frontend/dist/
+frontend/.vite/
+
+# OS
+.DS_Store
