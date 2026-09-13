@@ -3,6 +3,7 @@
 import uuid
 from typing import Any
 
+from app.concurrency import serialize_first_call
 from app.config import EVIDENCE_DIR, MODELS_DIR, WATER_SEG_CHECKPOINT
 from app.orchestrator.tool_registry import QueryInput, ToolResult, ToolSpec
 from app.specialists._loader import load_module
@@ -10,6 +11,7 @@ from app.specialists._loader import load_module
 _water_tool = None  # lazy singleton
 
 
+@serialize_first_call
 def _get_tool():
     global _water_tool
     if _water_tool is None:

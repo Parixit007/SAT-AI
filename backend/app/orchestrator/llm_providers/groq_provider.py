@@ -52,7 +52,10 @@ class GroqProvider(LLMProvider):
         for tc in tool_calls:
             try:
                 args = json.loads(tc.function.arguments)
-            except json.JSONDecodeError:
+            except (json.JSONDecodeError, TypeError):
+                # TypeError covers a None/non-string `arguments` -- outside the normal API
+                # contract, but not something this code controls either; gemini_provider's
+                # equivalent (`dict(c.args or {})`) already handles its own version of this.
                 args = {}
             result.append(ToolCall(tool_name=tc.function.name, arguments=args))
         return result

@@ -44,6 +44,69 @@ def test_upload_query_report_flow(client, sample_image):
     assert "water_body_segmentation" in r.text
 
 
+def test_upload_rejects_path_traversal_filename(client, sample_image):
+    """Regression test: `f.filename` used to be joined into the destination path unsanitized, so a
+    crafted filename with `../` segments (or an absolute path -- pathlib's `/` would discard the
+    upload dir entirely) could write outside the per-upload directory."""
+    from app.config import UPLOADS_DIR
+
+    with open(sample_image, "rb") as f:
+        r = client.post(
+            "/api/upload",
+            files={"files": ("../../../../tmp/evil_traversal.png", f, "image/png")},
+        )
+    assert r.status_code == 200
+    input_id = r.json()["input_id"]
+
+    # The one file written landed inside this upload's own directory, with no directory
+    # components from the crafted filename surviving into the saved name.
+    saved = list((UPLOADS_DIR / input_id).iterdir())
+    assert len(saved) == 1
+    assert saved[0].parent == UPLOADS_DIR / input_id
+    assert ".." not in saved[0].name and "/" not in saved[0].name
+
+
+def test_upload_same_filename_twice_does_not_overwrite(client, sample_image):
+    """Regression test: two files sharing a filename in one batch (e.g. an optical+SAR pair both
+    called 'export.tif') used to silently overwrite each other on disk."""
+    with open(sample_image, "rb") as f1, open(sample_image, "rb") as f2:
+        r = client.post(
+            "/api/upload",
+            files=[
+                ("files", ("export.tif", f1, "image/tiff")),
+                ("files", ("export.tif", f2, "image/tiff")),
+            ],
+        )
+    assert r.status_code == 200
+    body = r.json()
+    assert len(body["images"]) == 2
+    stored_paths = {img["stored_path"] for img in body["images"]}
+    assert len(stored_paths) == 2  # both files actually exist on disk, distinctly
+
+
+def test_upload_partial_failure_does_not_poison_the_whole_input_id(client, sample_image):
+    """Regression test: one bad file used to be persisted alongside the good ones (unfiltered),
+    so every future query against that input_id failed input validation entirely -- even when
+    other files in the same batch were perfectly valid."""
+    with open(sample_image, "rb") as good:
+        r = client.post(
+            "/api/upload",
+            files=[
+                ("files", ("good.png", good, "image/png")),
+                ("files", ("bad.txt", b"not an image", "text/plain")),
+            ],
+        )
+    assert r.status_code == 200
+    body = r.json()
+    assert len(body["images"]) == 1  # only the good file was saved
+    assert len(body["errors"]) == 1  # the bad one is reported distinctly, not silently dropped
+    input_id = body["input_id"]
+
+    r = client.post("/api/query", json={"input_id": input_id, "query_text": "how much water?"})
+    assert r.status_code == 200
+    assert r.json()["execution_trace"]["selected_task"] != "input_validation_failed"
+
+
 def test_query_with_unknown_input_id_is_404(client):
     r = client.post("/api/query", json={"input_id": "does-not-exist", "query_text": "hi"})
     assert r.status_code == 404

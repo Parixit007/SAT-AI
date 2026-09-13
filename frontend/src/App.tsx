@@ -64,13 +64,22 @@ function App() {
             {upload && upload.images.length > 0 && (
               <ul className="upload-image-list">
                 {upload.images.map((img) => (
-                  <li key={img.filename}>
+                  // stored_path, not filename -- two uploaded files can share a filename (e.g. an
+                  // optical+SAR pair both called "export.tif"), which isn't a unique key on its own.
+                  <li key={img.stored_path}>
                     <span className="upload-filename">{img.filename}</span>
                     <span className="upload-meta">
                       {img.width}×{img.height} · {img.modality_guess}
                       {img.geo && ` · ${img.geo.center_lat.toFixed(3)}, ${img.geo.center_lon.toFixed(3)}`}
                     </span>
                   </li>
+                ))}
+              </ul>
+            )}
+            {upload && upload.errors.length > 0 && (
+              <ul className="warning-list">
+                {upload.errors.map((e, i) => (
+                  <li key={i}>{e}</li>
                 ))}
               </ul>
             )}

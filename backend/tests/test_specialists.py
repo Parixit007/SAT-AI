@@ -25,6 +25,12 @@ def test_water_segmentation_respects_custom_threshold(sample_image):
 
     # A near-0 threshold should never classify less water than a near-1 threshold.
     assert low.structured_data["water_fraction"] >= high.structured_data["water_fraction"]
+    # Regression check: confidence is documented as [0.5, 1.0] regardless of threshold. The
+    # previous formula (mean(where(mask, probs, 1-probs))) only stayed in that range at the
+    # default threshold=0.5 -- it would silently report ~threshold-magnitude numbers at the
+    # extremes tested here instead.
+    assert 0.5 <= low.confidence <= 1.0
+    assert 0.5 <= high.confidence <= 1.0
 
 
 def test_grounding_smoke(sample_image):

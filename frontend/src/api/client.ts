@@ -27,6 +27,7 @@ export interface UploadResponse {
   input_id: string;
   images: UploadedImageInfo[];
   warnings: string[];
+  errors: string[]; // files that failed validation and were NOT saved (e.g. unsupported format)
 }
 
 export interface ToolUsage {

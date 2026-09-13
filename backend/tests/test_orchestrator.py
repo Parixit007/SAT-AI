@@ -1,5 +1,5 @@
 from app.orchestrator.controller import handle_query
-from app.orchestrator.llm_providers.base import ToolCall
+from app.orchestrator.llm_providers.base import LLMProvider, ToolCall
 from app.orchestrator.tool_registry import LatLon, QueryInput, ToolRegistry, ToolResult, ToolSpec
 from app.specialists import build_default_registry
 from tests.conftest import StubProvider
@@ -108,6 +108,37 @@ def test_tool_failure_becomes_a_trace_warning_not_a_crash(sample_image):
     assert result.trace.tools_used == []
     assert any("exploding_tool failed" in w and "groundingdino" in w for w in result.trace.warnings)
     assert result.confidence == 0.0
+
+
+def test_retry_does_not_reexecute_an_already_succeeded_tool(sample_image):
+    """Regression test: the LLM selects [water_body_segmentation, groundwater_potential] with no
+    location given, so groundwater_potential is incompatible and triggers the one-retry path. If
+    the retry naively re-suggests water_body_segmentation (which already ran and succeeded), it
+    must not run a second time -- previously it did, duplicating the trace entry and re-running an
+    already-successful (and possibly expensive) specialist."""
+
+    class RetryingProvider(LLMProvider):
+        def __init__(self):
+            self.call_count = 0
+
+        def select_tools(self, query, tool_specs, input_summary):
+            self.call_count += 1
+            if self.call_count == 1:
+                return [
+                    ToolCall(tool_name="water_body_segmentation", arguments={}),
+                    ToolCall(tool_name="groundwater_potential", arguments={}),
+                ]
+            # Retry: naively re-suggests the tool that already ran -- exactly the failure mode found.
+            return [ToolCall(tool_name="water_body_segmentation", arguments={})]
+
+    registry = build_default_registry()
+    provider = RetryingProvider()
+
+    result = handle_query("water and groundwater?", QueryInput(images=[sample_image]), provider, registry)
+
+    assert provider.call_count == 2  # confirms the retry path was actually exercised
+    assert len(result.trace.tools_used) == 1
+    assert result.trace.tools_used[0]["name"] == "water_body_segmentation"
 
 
 def test_no_images_and_no_location_is_a_validation_error():
