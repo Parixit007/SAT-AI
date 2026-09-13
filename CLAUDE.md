@@ -178,8 +178,13 @@ readouts — rather than one decorative brand color. Keep new UI on those tokens
 
 Needs a noncommercial (free) GEE account + service account — the user sets this up themselves;
 `GEE_PROJECT_ID`/`GEE_SERVICE_ACCOUNT_EMAIL`/`GEE_SERVICE_ACCOUNT_KEY_FILE` in `.env` (see
-`.env.example`). **Not configured in this dev environment** — everything here is written and
-unit-tested against mocked/fixed values, but has not been run against the live Earth Engine service.
+`.env.example`). **A live service account is configured in this dev environment** (real values in
+`.env`, key file in `secrets/gee-key.json`, both gitignored) and has been used for ad-hoc manual
+verification against real locations — e.g. Bangladesh (23.5, 90.3) returned a "High" groundwater
+score end-to-end through the live orchestrator. It still isn't exercised by the automated test
+suite (`backend/tests/test_groundwater.py` covers the pure-Python scoring logic plus GEE calls
+monkeypatched out — see that file's own docstring), so a from-scratch environment without this
+`.env`/key file will still hit the clean "not configured" 503 path until set up.
 
 - **`gee/client.py`** — lazy `ee.Initialize()` singleton (`ensure_initialized()`), same pattern as
   the specialist adapters' lazy model singletons. Raises a clear `RuntimeError` if unconfigured,

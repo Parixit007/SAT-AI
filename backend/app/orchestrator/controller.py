@@ -90,8 +90,14 @@ def handle_query(
                     f"{query_text}\n\nNote: the tool '{call.tool_name}' is not usable here "
                     f"({incompatible_reason}). Pick a different, compatible tool, or none."
                 )
-                tool_calls = llm_provider.select_tools(retry_query, tool_specs, input_summary)
-                i = 0
+                retry_calls = llm_provider.select_tools(retry_query, tool_specs, input_summary)
+                # Keep the prefix already processed (successes and skips before index i) exactly as
+                # it is; only the still-unprocessed remainder gets replaced. Without this, resetting
+                # i to 0 over a brand-new full list let a tool that already ran successfully get
+                # re-selected and re-executed, duplicating it in the trace -- also drop anything the
+                # retry re-suggests that's already in `executed`, as a second line of defense.
+                already_ran = {result.tool_name for result, _, _ in executed}
+                tool_calls = tool_calls[:i] + [c for c in retry_calls if c.tool_name not in already_ran]
                 continue
             skip_warnings.append(incompatible_reason)
             i += 1

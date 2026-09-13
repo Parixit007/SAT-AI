@@ -43,7 +43,11 @@ export function QueryBox({ hasUpload, submitting, location, onLocationChange, on
     const parsedLat = Number(nextLat);
     const parsedLon = Number(nextLon);
     if (nextLat.trim() === "" || nextLon.trim() === "" || Number.isNaN(parsedLat) || Number.isNaN(parsedLon)) {
-      if (nextLat.trim() === "" && nextLon.trim() === "") onLocationChange(null);
+      // Either field being blank/invalid makes the pair incomplete -- always clear location so
+      // the visible fields and the actual submitted location can never diverge. (Previously this
+      // only cleared when BOTH fields were empty, so clearing just one field left the old
+      // location silently queued for submission while the box showed something else.)
+      onLocationChange(null);
       return;
     }
     onLocationChange({ lat: parsedLat, lon: parsedLon });

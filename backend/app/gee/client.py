@@ -2,11 +2,13 @@
 _get_tool(). Registering a GEE-backed tool (cheap, metadata-only) always works even before GEE is
 configured; only actually running one calls ensure_initialized() and can raise."""
 
+from app.concurrency import serialize_first_call
 from app.config import settings
 
 _initialized = False
 
 
+@serialize_first_call
 def ensure_initialized() -> None:
     global _initialized
     if _initialized:

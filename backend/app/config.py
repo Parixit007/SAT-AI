@@ -2,7 +2,7 @@
 than re-deriving them, so the repo can be moved/renamed without touching every file."""
 
 from pathlib import Path
-from typing import Optional
+from typing import Literal, Optional
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
@@ -20,7 +20,10 @@ WATER_SEG_CHECKPOINT = MODELS_DIR / "water_segmentation" / "checkpoints" / "wate
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=REPO_ROOT / ".env", env_file_encoding="utf-8", extra="ignore")
 
-    llm_provider: str = "gemini"  # "gemini" | "groq"
+    # A typo here (e.g. "Gemini", "grok") used to pass silently as a plain `str` and only surface
+    # deep inside a request as an uncaught ValueError -> raw 500, instead of the clean 503 every
+    # other provider-failure path gets. Literal makes pydantic reject a bad value at startup.
+    llm_provider: Literal["gemini", "groq"] = "gemini"
     gemini_api_key: Optional[str] = None
     groq_api_key: Optional[str] = None
     # Alias rather than a pinned version on purpose: a hardcoded "gemini-2.0-flash" here silently

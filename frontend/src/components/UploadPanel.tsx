@@ -35,7 +35,19 @@ export function UploadPanel({ onUploaded }: Props) {
     <div className="upload-block">
       <div
         className="dropzone"
+        role="button"
+        tabIndex={0}
+        aria-label="Choose files to upload"
         onClick={() => inputRef.current?.click()}
+        onKeyDown={(e) => {
+          // The dropzone is otherwise mouse/drag-only -- uploading imagery is one of the two ways
+          // to make a query valid at all, so it needs a keyboard path too. The real <input> is
+          // `hidden`, which removes it from the tab order, so this div is the only reachable target.
+          if (e.key === "Enter" || e.key === " ") {
+            e.preventDefault();
+            inputRef.current?.click();
+          }
+        }}
         onDragOver={(e) => e.preventDefault()}
         onDrop={(e) => {
           e.preventDefault();
@@ -46,8 +58,10 @@ export function UploadPanel({ onUploaded }: Props) {
           <span>Drop one image, or a pair — PNG, JPEG, TIFF</span>
         ) : (
           <ul className="file-list">
-            {files.map((f) => (
-              <li key={f.name}>{f.name}</li>
+            {files.map((f, i) => (
+              // Index, not f.name -- two files can share a name (e.g. an optical+SAR pair both
+              // called "export.tif"), which isn't a unique key on its own.
+              <li key={i}>{f.name}</li>
             ))}
           </ul>
         )}

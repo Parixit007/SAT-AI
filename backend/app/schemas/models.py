@@ -31,6 +31,7 @@ class UploadResponse(BaseModel):
     input_id: str
     images: list[UploadedImageInfo]
     warnings: list[str] = []
+    errors: list[str] = []  # files that failed validation and were NOT saved (e.g. bad format)
 
 
 class LocationIn(BaseModel):

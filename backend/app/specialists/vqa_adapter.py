@@ -5,6 +5,7 @@ configured and nothing downloaded."""
 
 from typing import Any
 
+from app.concurrency import serialize_first_call
 from app.config import MODELS_DIR, settings
 from app.orchestrator.tool_registry import QueryInput, ToolResult, ToolSpec
 from app.specialists._loader import load_module
@@ -12,6 +13,7 @@ from app.specialists._loader import load_module
 _vqa_tool = None  # lazy singleton -- see module docstring
 
 
+@serialize_first_call
 def _get_tool():
     global _vqa_tool
     if _vqa_tool is None:

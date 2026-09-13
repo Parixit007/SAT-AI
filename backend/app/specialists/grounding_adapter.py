@@ -7,6 +7,7 @@ query does."""
 import uuid
 from typing import Any
 
+from app.concurrency import serialize_first_call
 from app.config import EVIDENCE_DIR, GROUNDING_CHECKPOINT, GROUNDING_CONFIG, MODELS_DIR
 from app.orchestrator.tool_registry import QueryInput, ToolResult, ToolSpec
 from app.specialists._loader import load_module
@@ -14,6 +15,7 @@ from app.specialists._loader import load_module
 _grounding_tool = None  # lazy singleton -- see module docstring
 
 
+@serialize_first_call
 def _get_tool():
     global _grounding_tool
     if _grounding_tool is None:

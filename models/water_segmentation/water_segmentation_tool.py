@@ -111,7 +111,17 @@ class WaterSegmentationTool:
         mask = probs_full >= threshold
 
         water_fraction = float(mask.mean())
-        confidence = float(np.mean(np.where(mask, probs_full, 1.0 - probs_full)))
+        # Distance from the decision boundary, rescaled into [0.5, 1.0] relative to `threshold`
+        # itself -- not a fixed 0.5 split. `np.where(mask, probs_full, 1-probs_full)` (the previous
+        # formula) only stayed in [0.5, 1.0] when threshold == 0.5; at threshold=0.01, a mask=True
+        # pixel with probs_full=0.08 would report 0.08 as "confidence" instead of the documented
+        # floor of 0.5. eps avoids a divide-by-zero at threshold exactly 0.0 or 1.0; the final clip
+        # guards the documented range against any floating-point overshoot at those extremes.
+        eps = 1e-6
+        above = (probs_full - threshold) / max(1.0 - threshold, eps)
+        below = (threshold - probs_full) / max(threshold, eps)
+        per_pixel_confidence = 0.5 + 0.5 * np.where(mask, above, below)
+        confidence = float(np.clip(np.mean(per_pixel_confidence), 0.5, 1.0))
 
         return {"mask": mask, "water_fraction": round(water_fraction, 4), "confidence": round(confidence, 4)}
 
