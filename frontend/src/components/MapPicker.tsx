@@ -46,11 +46,28 @@ export function MapPicker({ location, radiusM, onPick }: Props) {
         zoom={4}
         className="map-canvas"
         worldCopyJump
-        attributionControl={false}
       >
+        {/* Esri World Imagery -- same free, keyless satellite basemap as before (already
+            sub-meter resolution in most areas; there isn't a meaningfully higher-resolution
+            free alternative that doesn't require an API key). The two reference layers below
+            are what's new: Esri's own free overlays, designed specifically to sit on top of
+            World Imagery for exactly this hybrid look -- roads underneath, place labels and
+            political borders on top so text stays legible over the road lines. */}
         <TileLayer
           url="https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}"
           maxZoom={18}
+          zIndex={1}
+        />
+        <TileLayer
+          url="https://server.arcgisonline.com/ArcGIS/rest/services/Reference/World_Transportation/MapServer/tile/{z}/{y}/{x}"
+          maxZoom={18}
+          zIndex={2}
+        />
+        <TileLayer
+          url="https://server.arcgisonline.com/ArcGIS/rest/services/Reference/World_Boundaries_and_Places/MapServer/tile/{z}/{y}/{x}"
+          maxZoom={18}
+          zIndex={3}
+          attribution="Tiles &copy; Esri &mdash; Esri, Maxar, Earthstar Geographics, and the GIS User Community"
         />
         <ClickHandler onPick={onPick} />
         <Recenter location={location} />

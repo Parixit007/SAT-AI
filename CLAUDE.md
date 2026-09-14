@@ -141,8 +141,14 @@ query_id (`Content-Disposition: attachment`); a polished PDF/HTML export is futu
 ## Frontend (`frontend/src/`)
 
 Map-centric layout: a fixed 400px control panel (query → imagery → result, each its own
-`.panel-section`) beside a full-bleed Leaflet map (`components/MapPicker.tsx`, Esri World Imagery
-tiles, no API key needed). The map is the location picker — clicking it sets `location`, which
+`.panel-section`) beside a full-bleed Leaflet map (`components/MapPicker.tsx`). Three stacked,
+free, keyless Esri tile layers, not just raw imagery: World Imagery (satellite base) +
+Reference/World_Transportation (roads) + Reference/World_Boundaries_and_Places (country/state
+borders and place labels, topmost so text stays legible over the road lines) — all verified live
+before wiring in, same discipline as the GEE asset ids. No meaningfully higher-resolution free
+satellite alternative exists without an API key, so World Imagery stays the base; what changed is
+the hybrid labels/roads/borders overlay on top of it. The map is the location picker — clicking it
+sets `location`, which
 lives in `App.tsx` and flows down to both the map and `QueryBox`'s numeric lat/lon fields, so the
 two stay in sync either way you set it. A georeferenced upload auto-drops the pin at its own
 coordinates (see `handleUploaded`). Leaflet's default marker is a bundled PNG that breaks under
