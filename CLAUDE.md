@@ -28,7 +28,7 @@ models/grounding/       GroundingTool (text-guided region grounding) -- working
 models/water_segmentation/   WaterSegmentationTool (water-body mask) -- working
 models/vqa/             VQATool (PaliGemma RSVQA-LR VQA) -- working, live-verified
 models/change_detection/   ChangeDetectionTool (bi-temporal pixel-diff, Stage 1) -- working
-models/fusion/          not built yet (Phase 4)
+models/fusion/          FusionTool (SAR-backscatter water/built-up, Stage 1) -- working
 notebooks/               Kaggle training notebooks (see below)
 data/scripts/            download_{bigearthnet,vrsbench,rsvqa,cdvqa}.py + common.py
 data/raw/                downloaded datasets (gitignored)
@@ -93,6 +93,12 @@ decision (tool selection):
    entirely — the tool doesn't care how many, if any, were uploaded) + `min_images`/`max_images`,
    and/or `requires_location` (True fails compatibility if `QueryInput.location` is `None`).
    `ToolSpec.is_compatible()` checks both. A tool can need images, a location, or both.
+   `required_modality_pair` (e.g. `("optical","sar")`, default `None`) is for a tool needing one
+   image of *each* of two specific modalities rather than any mix of `compatible_modalities` —
+   without it, `compatible_modalities=["optical","sar"]` alone would wrongly accept two optical
+   images too, since it only checks each image's modality is *somewhere* in the allowed list, not
+   that both required modalities are actually present. Added for `fusion_adapter.py`; every other
+   tool leaves it unset (zero behavior change for them).
 4. **`orchestrator/controller.py`** (`handle_query(query_text, query_input, ...)`) — the actual
    loop: validate → LLM tool selection → compatibility check (one retry on mismatch, then a
    structured skip-with-warning, never a crash) → execute → `confidence.py` combines per-tool
@@ -160,9 +166,9 @@ readouts — rather than one decorative brand color. Keep new UI on those tokens
   imagery. **`notebooks/kaggle_finetune_water_unet.ipynb` trains a fresh checkpoint with this exact
   preprocessing baked in, which would resolve that gap** — run it and swap the checkpoint once you
   have a result that beats the current val_iou (0.7638).
-- All four image-based specialists (grounding, water segmentation, VQA, change detection) share
-  one shape: a `*Tool` class with lazy imports + one inference method, plus a separate top-level
-  `draw_*()` function for visualization — keep `fusion` (Phase 4, still unbuilt) consistent too.
+- All five image-based specialists (grounding, water segmentation, VQA, change detection, fusion)
+  share one shape: a `*Tool` class with lazy imports + one inference method, plus a separate
+  top-level `draw_*()` function for visualization.
 - **`visual_question_answering`** (`models/vqa/vqa_tool.py` + `backend/app/specialists/vqa_adapter.py`)
   — the spec's mandatory VQA baseline. Wraps `google/paligemma-3b-ft-rsvqa-lr-224`, PaliGemma
   already fine-tuned by Google on RSVQA-LR. **Gated on the Hub**: needs `HF_TOKEN` in `.env` from an
@@ -206,6 +212,32 @@ readouts — rather than one decorative brand color. Keep new UI on those tokens
   generalize to CDVQA-style eval queries), applied to both timesteps + a pure-Python area-delta
   layer for class-aware summaries ("building area increased from 8% to 15%") and a real
   multi-class spatial change map.
+- **`optical_sar_fusion`** (`models/fusion/fusion_tool.py` +
+  `backend/app/specialists/fusion_adapter.py`) — the spec's mandatory cross-modal capability:
+  "extract complementary information from a co-registered optical/multispectral and SAR image
+  pair." `min_images=2, max_images=2`, `required_modality_pair=("optical","sar")` (any order —
+  the adapter figures out which is which via each image's own `modality_guess`). **Stage 1
+  (current, training-free)**: recursive (two-level) Otsu thresholding on SAR backscatter —
+  very-low backscatter → water candidate, very-high → built-up candidate (standard SAR physics:
+  water is smooth/specular, buildings give strong double-bounce returns) — same adaptive-threshold
+  approach as `change_detection_tool.py`, duplicated rather than imported since each `models/*/`
+  script stays standalone. The actual "fusion" happens in the *adapter*, not the tool script: it
+  also calls the existing `water_segmentation` tool on the optical image and reconciles the two
+  independent reads — agreement raises confidence, disagreement is surfaced explicitly rather than
+  averaged away (e.g. cloud-obscured optical vs. a clear SAR read is exactly the scenario the spec
+  cites SAR for). Built-up detection is SAR-only for now — no optical cross-check exists yet, and
+  SAR brightness alone can false-positive on mountainous terrain (layover/foreshortening), so it's
+  documented as the coarser of the two reads. **Stage 2 (planned)**:
+  `notebooks/kaggle_finetune_fusion_sen12.ipynb`, a small early-fusion CNN (stacked optical+SAR
+  channels) trained on the TUM SEN1-2 dataset (kaggle.com/datasets/requiemonk/
+  sentinel12-image-pairs-segregated-by-terrain, CC BY 4.0, 4 land-cover classes incl. urban),
+  added via Kaggle's "Add Input" — no download step, unlike every prior notebook. Chosen over
+  BigEarthNet-MM (the dataset actually named in the spec for general "remote-sensing adaptation")
+  since BigEarthNet-MM is ~118GB (Zenodo `10891137`, confirmed via its own API) — far beyond this
+  project's budget and Kaggle's 20GB working-directory limit; nothing in the spec requires the same
+  dataset for every specialist. The already-downloaded `data/raw/bigearthnet/` shard
+  (`download_bigearthnet.py --shard`) is Sentinel-2 (optical) only, confirmed via its own CSV
+  manifest — not usable for fusion specifically.
 
 ## Google Earth Engine (`backend/app/gee/`)
 
