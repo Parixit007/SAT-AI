@@ -4,7 +4,7 @@
 export const API_BASE = import.meta.env.VITE_API_BASE_URL ?? "http://127.0.0.1:8000";
 
 export interface GeoMetadata {
-  source: "geotiff" | "exif";
+  source: "geotiff" | "exif" | "map_capture";
   center_lat: number;
   center_lon: number;
   bounds_wgs84: [number, number, number, number] | null;
@@ -70,6 +70,23 @@ export async function uploadImages(files: File[]): Promise<UploadResponse> {
 
   const response = await fetch(`${API_BASE}/api/upload`, { method: "POST", body: formData });
   if (!response.ok) throw new Error(`Upload failed: ${await parseErrorDetail(response)}`);
+  return response.json();
+}
+
+export interface AreaBounds {
+  min_lat: number;
+  min_lon: number;
+  max_lat: number;
+  max_lon: number;
+}
+
+export async function captureArea(bounds: AreaBounds): Promise<UploadResponse> {
+  const response = await fetch(`${API_BASE}/api/capture`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(bounds),
+  });
+  if (!response.ok) throw new Error(`Capture failed: ${await parseErrorDetail(response)}`);
   return response.json();
 }
 

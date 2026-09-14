@@ -22,6 +22,7 @@ See `/Users/parixitsingh/.claude/plans/frolicking-whistling-dewdrop.md` for the 
 ```
 backend/app/           FastAPI app + orchestrator (see below)
 backend/app/gee/        Google Earth Engine layer/scoring code (see GEE section below)
+backend/app/gis/        Esri map-area image capture (see the section below GEE)
 backend/tests/          pytest suite (mocked-LLM orchestrator tests, specialist smoke tests, API tests)
 frontend/               React + Vite + TS single-page app
 models/grounding/       GroundingTool (text-guided region grounding) -- working
@@ -175,6 +176,25 @@ longer `duration`/gentler `easeLinearity` so the settled motion itself reads as 
 A single-flyTo-call check (also instrumented live) ruled out a StrictMode double-fire as a
 contributing cause. Leaflet's default marker is a bundled PNG that breaks under Vite, so the pin
 is a `divIcon` styled via `.map-pin`.
+
+**Zoom range** (`maxZoom={21}` / `maxNativeZoom={19}` on all three `TileLayer`s, up from a flat
+`maxZoom={18}`): live-verified Esri's service schema advertises LODs up to 23, but *real* tile
+content (fetched and inspected directly, not assumed) runs out well before that and varies by
+location — a well-covered city center was genuinely detailed to z19 and returned a literal "Map
+data not yet available" placeholder tile at z20. `maxNativeZoom` caps where Leaflet actually
+*requests* tiles; `maxZoom` above that lets the UI zoom in further by smoothly upscaling the
+deepest real tile instead of ever requesting/showing a broken placeholder — more zoom range with
+no location-dependent risk of a visibly broken tile.
+
+**Capturing a real image from the map** (`MapDrawer.tsx`'s mode toggle — "Pick location" /
+"Select area" — plus `MapPicker.tsx`'s `AreaSelectHandler`): in "Select area" mode, two map clicks
+define a rectangle's opposite corners (a third click starts over, no explicit clear needed first);
+once both are set, "Capture image" calls a new backend endpoint that fetches real satellite
+imagery for exactly that bbox and feeds it into the app as if it had been uploaded as a file —
+`onCaptured` is literally `App.tsx`'s existing `handleUploaded`, reused as-is, so the result shows
+up as an attached, immediately-queryable image with the location pin auto-set, same as any other
+georeferenced upload. See `backend/app/gis/esri_capture.py` and the GEE-adjacent section below for
+the backend half (`/api/capture`).
 
 **Light glassmorphism theme** (also new this session, replacing the earlier dark slate-navy
 theme): translucent, blurred (`backdrop-filter`) panels — header, composer bar, message bubbles,
@@ -350,6 +370,40 @@ monkeypatched out — see that file's own docstring), so a from-scratch environm
 - `groundwater_adapter.py`'s reported "confidence" is data completeness (how many of the 5 layers
   had data for that location), not a statistical confidence — this is a deterministic score, not a
   probabilistic model; documented in the tool description too so it isn't misrepresented in the UI.
+
+## Map-area image capture (`backend/app/gis/`, `POST /api/capture`)
+
+Lets the map itself supply an image, not just a location — select a rectangle on the map (see the
+Frontend section above) and get a real satellite image of exactly that area, fed into the app
+through the *same* code path a real file upload takes. No API key needed: Esri's World Imagery
+`MapServer/export` REST operation (same free, keyless service the map's base layer already uses)
+returns a real image for an arbitrary bbox+pixel-size in one request — live-verified against
+central New Delhi at a ~2km-wide selection: a genuinely detailed ~900KB PNG (individual buildings,
+roads, trees legible), not a downsampled placeholder. Deliberately exports *only* the base imagery
+layer, not the two reference overlays (roads/boundaries) also shown on the map — those are a UI
+aid for picking a location, and baking road lines/place labels into the pixels would pollute what
+the vision tools (grounding, water segmentation, VQA, change detection) actually see.
+
+- **`gis/esri_capture.py`** — `compute_export_size()` is pure Python (picks a width/height
+  proportional to the selection's real-world aspect ratio, longitude-convergence-corrected, capped
+  at 1024px on the longer side) vs. **`fetch_satellite_image()`**, the actual HTTP call to Esri
+  (raises `requests.RequestException` on failure, turned into a 503 by the route — same pattern as
+  every other external-service call in this codebase). A third function, `png_to_geotiff()`,
+  wraps the flat PNG Esri returns in a *real* GeoTIFF (EPSG:4326, 3-band) covering exactly the
+  requested bounds — no reprojection needed, since the PNG's own pixel grid already spans that bbox
+  by construction. **This one is load-bearing, not cosmetic**: a plain PNG has no embedded CRS/band
+  info, so `input_validation.py`'s modality/geo extraction — which every query re-runs from
+  scratch against the *stored file*, not the upload response — came back `modality_guess="unknown"`
+  at query time even though `/api/capture`'s own response said "optical" right after capture. A
+  real GeoTIFF makes `extract_geotiff_metadata()` derive "optical" (band_count=3) and the correct
+  bounds organically, through the same already-tested path a real georeferenced upload takes, so
+  it's consistent at both capture time and query time — found live by actually running a captured
+  image through a query and reading the execution trace, not assumed from the API response alone.
+- **`api/routes_upload.py`**'s `/capture` endpoint: validates `min_lat < max_lat` /
+  `min_lon < max_lon` (400 if not — covers an accidental same-point double-click too), fetches +
+  converts, writes to `UPLOADS_DIR/<input_id>/0_captured_area.tif`, then calls the same
+  `_validate_save_and_respond()` helper `/upload` uses — zero special-casing needed once the file
+  is on disk correctly, and any future `/upload` fix automatically applies here too.
 
 ## Kaggle training notebooks (`notebooks/`)
 

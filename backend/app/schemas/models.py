@@ -8,7 +8,7 @@ from pydantic import BaseModel
 
 
 class GeoMetadataOut(BaseModel):
-    source: str  # "geotiff" | "exif"
+    source: str  # "geotiff" | "exif" | "map_capture"
     center_lat: float
     center_lon: float
     bounds_wgs84: Optional[tuple[float, float, float, float]] = None
@@ -37,6 +37,16 @@ class UploadResponse(BaseModel):
 class LocationIn(BaseModel):
     lat: float
     lon: float
+
+
+class CaptureRequest(BaseModel):
+    """A rectangular area picked on the map (two opposite corners) -- min/max rather than the raw
+    corner points since the frontend doesn't guarantee any particular click order."""
+
+    min_lat: float
+    min_lon: float
+    max_lat: float
+    max_lon: float
 
 
 class QueryRequest(BaseModel):

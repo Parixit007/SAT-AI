@@ -166,6 +166,7 @@ function App() {
         onPick={setLocation}
         onLocationChange={setLocation}
         onClose={() => setMapOpen(false)}
+        onCaptured={handleUploaded}
       />
     </div>
   );
