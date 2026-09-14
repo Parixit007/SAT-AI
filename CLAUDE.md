@@ -26,7 +26,9 @@ backend/tests/          pytest suite (mocked-LLM orchestrator tests, specialist 
 frontend/               React + Vite + TS single-page app
 models/grounding/       GroundingTool (text-guided region grounding) -- working
 models/water_segmentation/   WaterSegmentationTool (water-body mask) -- working
-models/vqa/, models/change_detection/, models/fusion/   not built yet (later phases)
+models/vqa/             VQATool (PaliGemma RSVQA-LR VQA) -- working, live-verified
+models/change_detection/   ChangeDetectionTool (bi-temporal pixel-diff, Stage 1) -- working
+models/fusion/          not built yet (Phase 4)
 notebooks/               Kaggle training notebooks (see below)
 data/scripts/            download_{bigearthnet,vrsbench,rsvqa,cdvqa}.py + common.py
 data/raw/                downloaded datasets (gitignored)
@@ -158,9 +160,9 @@ readouts — rather than one decorative brand color. Keep new UI on those tokens
   imagery. **`notebooks/kaggle_finetune_water_unet.ipynb` trains a fresh checkpoint with this exact
   preprocessing baked in, which would resolve that gap** — run it and swap the checkpoint once you
   have a result that beats the current val_iou (0.7638).
-- Both wrappers share one shape: a `*Tool` class with lazy imports + one inference method, plus a
-  separate top-level `draw_*()` function for visualization — keep new specialists (VQA, change
-  detection, fusion) consistent with this pattern.
+- All four image-based specialists (grounding, water segmentation, VQA, change detection) share
+  one shape: a `*Tool` class with lazy imports + one inference method, plus a separate top-level
+  `draw_*()` function for visualization — keep `fusion` (Phase 4, still unbuilt) consistent too.
 - **`visual_question_answering`** (`models/vqa/vqa_tool.py` + `backend/app/specialists/vqa_adapter.py`)
   — the spec's mandatory VQA baseline. Wraps `google/paligemma-3b-ft-rsvqa-lr-224`, PaliGemma
   already fine-tuned by Google on RSVQA-LR. **Gated on the Hub**: needs `HF_TOKEN` in `.env` from an
@@ -188,6 +190,22 @@ readouts — rather than one decorative brand color. Keep new UI on those tokens
   groundwater favorability ("should I dig a well/tubewell here?") via a weighted overlay of GEE
   layers (rainfall, topographic wetness index, land cover, distance to surface water) — no model
   training involved, a deterministic GIS computation. See the GEE section below.
+- **`change_detection`** (`models/change_detection/change_detection_tool.py` +
+  `backend/app/specialists/change_detection_adapter.py`) — the spec's mandatory bi-temporal
+  change-analysis capability. `min_images=2, max_images=2`, in acquisition order (first = earlier
+  date). **Stage 1 (current, training-free)**: classic Otsu-thresholded pixel differencing +
+  largest-connected-region bounding box — no checkpoint (`checkpoint_id=None`), works today with
+  no Kaggle dependency. Confidence is Otsu's between-class variance ratio (how cleanly the
+  difference separates into changed/unchanged), a heuristic signal, *not* a calibrated
+  probability. Can say *that* and roughly *where* something changed, not *which* land-cover class
+  changed — that needs Stage 2. **Stage 2 (planned)**:
+  `notebooks/kaggle_finetune_change_segmentation_second.ipynb`, a 6-class semantic segmentation
+  U-Net trained on SECOND-CC (Zenodo `16937571`, CC-BY-4.0, 6,041 bitemporal pairs + segmentation
+  maps + 30,205 change captions — chosen over the original CDVQA+SECOND path since SECOND itself
+  is Google-Drive-only with no stated license; SECOND-CC is SECOND-derived so should still
+  generalize to CDVQA-style eval queries), applied to both timesteps + a pure-Python area-delta
+  layer for class-aware summaries ("building area increased from 8% to 15%") and a real
+  multi-class spatial change map.
 
 ## Google Earth Engine (`backend/app/gee/`)
 
