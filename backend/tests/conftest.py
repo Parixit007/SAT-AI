@@ -36,6 +36,55 @@ def georeferenced_tif(tmp_path: Path) -> Path:
 
 
 @pytest.fixture
+def sar_geotiff(tmp_path: Path) -> Path:
+    """A synthetic single-band GeoTIFF -- input_validation.py infers 'sar' from band count <= 2."""
+    import rasterio
+    from rasterio.transform import from_bounds
+
+    path = tmp_path / "sar.tif"
+    transform = from_bounds(500000, 1430000, 510000, 1440000, 50, 50)
+    arr = np.random.default_rng(4).integers(90, 140, size=(1, 50, 50), dtype=np.uint8)
+    with rasterio.open(
+        path, "w", driver="GTiff", height=50, width=50, count=1,
+        dtype="uint8", crs="EPSG:32643", transform=transform,
+    ) as dst:
+        dst.write(arr)
+    return path
+
+
+@pytest.fixture
+def optical_sar_pair(tmp_path: Path) -> tuple[Path, Path]:
+    """A co-registered optical (3-band GeoTIFF) + SAR (1-band GeoTIFF) pair, with a known dark
+    (water-like) block and a known bright (built-up-like) block injected into the SAR band, so
+    fusion tests can assert against known regions rather than just 'something was detected'."""
+    import rasterio
+    from rasterio.transform import from_bounds
+
+    transform = from_bounds(500000, 1430000, 510000, 1440000, 100, 100)
+
+    optical_path = tmp_path / "pair_optical.tif"
+    optical_arr = np.random.default_rng(5).integers(0, 255, size=(3, 100, 100), dtype=np.uint8)
+    with rasterio.open(
+        optical_path, "w", driver="GTiff", height=100, width=100, count=3,
+        dtype="uint8", crs="EPSG:32643", transform=transform,
+    ) as dst:
+        dst.write(optical_arr)
+
+    sar_path = tmp_path / "pair_sar.tif"
+    rng = np.random.default_rng(6)
+    sar_arr = rng.integers(90, 140, size=(1, 100, 100), dtype=np.uint8)
+    sar_arr[0, 10:40, 10:40] = rng.integers(0, 15, size=(30, 30))       # dark block -> water
+    sar_arr[0, 60:90, 60:90] = rng.integers(230, 256, size=(30, 30))    # bright block -> built-up
+    with rasterio.open(
+        sar_path, "w", driver="GTiff", height=100, width=100, count=1,
+        dtype="uint8", crs="EPSG:32643", transform=transform,
+    ) as dst:
+        dst.write(sar_arr)
+
+    return optical_path, sar_path
+
+
+@pytest.fixture
 def plain_tif(tmp_path: Path) -> Path:
     """A TIFF with no georeferencing at all."""
     path = tmp_path / "plain.tif"

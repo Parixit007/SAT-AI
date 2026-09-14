@@ -4,6 +4,7 @@ registering its TOOL_SPEC here -- no orchestrator changes needed."""
 
 from app.orchestrator.tool_registry import ToolRegistry
 from app.specialists.change_detection_adapter import TOOL_SPEC as CHANGE_DETECTION_TOOL_SPEC
+from app.specialists.fusion_adapter import TOOL_SPEC as FUSION_TOOL_SPEC
 from app.specialists.grounding_adapter import TOOL_SPEC as GROUNDING_TOOL_SPEC
 from app.specialists.groundwater_adapter import TOOL_SPEC as GROUNDWATER_TOOL_SPEC
 from app.specialists.vqa_adapter import TOOL_SPEC as VQA_TOOL_SPEC
@@ -17,4 +18,5 @@ def build_default_registry() -> ToolRegistry:
     registry.register(WATER_SEG_TOOL_SPEC)
     registry.register(GROUNDWATER_TOOL_SPEC)
     registry.register(CHANGE_DETECTION_TOOL_SPEC)
+    registry.register(FUSION_TOOL_SPEC)
     return registry

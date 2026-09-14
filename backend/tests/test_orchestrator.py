@@ -34,6 +34,44 @@ def test_routes_bitemporal_query_to_change_detection(change_pair_images):
     assert 0.0 <= result.confidence <= 1.0
 
 
+def test_routes_optical_sar_pair_to_fusion(optical_sar_pair):
+    optical, sar = optical_sar_pair
+    registry = build_default_registry()
+    provider = StubProvider([ToolCall(tool_name="optical_sar_fusion", arguments={})])
+
+    result = handle_query(
+        "Use the optical and SAR images together to find water and built-up regions.",
+        QueryInput(images=[optical, sar]),
+        provider,
+        registry,
+    )
+
+    assert result.trace.selected_task == "optical_sar_fusion"
+    assert result.trace.tools_used[0]["name"] == "optical_sar_fusion"
+    assert result.trace.tools_used[0]["checkpoint_id"] is None
+    assert 0.0 <= result.confidence <= 1.0
+
+
+def test_fusion_rejects_two_images_of_the_same_modality(georeferenced_tif, tmp_path):
+    """required_modality_pair (tool_registry.py): compatible_modalities=["optical","sar"] alone
+    would wrongly accept two optical images (both individually allowed) -- required_modality_pair
+    must catch that neither is actually SAR."""
+    import shutil
+
+    second_optical = tmp_path / "second_optical.tif"
+    shutil.copy(georeferenced_tif, second_optical)
+
+    registry = build_default_registry()
+    provider = StubProvider([ToolCall(tool_name="optical_sar_fusion", arguments={})])
+
+    result = handle_query(
+        "fuse these", QueryInput(images=[georeferenced_tif, second_optical]), provider, registry
+    )
+
+    assert result.trace.tools_used == []
+    assert any("needs exactly one optical and one sar" in w for w in result.trace.warnings)
+
+
 def test_incompatible_input_is_rejected_not_executed(sample_image, tmp_path):
     import shutil
 
