@@ -167,7 +167,22 @@ readouts — rather than one decorative brand color. Keep new UI on those tokens
   account that accepted the Gemma license, and ~11.7GB to download (the Hub stores fp32; it's cast
   to bfloat16 on load, so ~6GB resident). Its reported confidence is mean generated-token
   probability — a generation-likelihood proxy, *not* a calibrated chance the answer is right.
-  Stage 2 (our own LoRA fine-tune on the fully-local RSVQA-LR set) is still to come.
+  Stage 2 (our own LoRA fine-tune on the fully-local RSVQA-LR set) is written
+  (`notebooks/kaggle_finetune_vqa_rsvqa.ipynb`) but not yet run.
+  **Live-verified on the M4** (2026-09-14): model load 17-20s, per-question latency 0.66-1.1s
+  (avg 0.72s) — comfortably demo-viable. Correctness spot-check against 8 RSVQA-LR train
+  examples (see caveat below) got rural/urban and presence-type questions right (6/8 overall) but
+  answered a `count` question ("What is the amount of buildings?") with a bare "yes" — a wrong
+  answer *type*, not just an imprecise count, worth a deeper look before relying on count-type
+  answers; not yet root-caused (could be RSVQA's own published count difficulty, a prompt/format
+  issue, or genuinely this checkpoint's weakness — 1 example is nowhere near enough to tell).
+  **Data gap found while verifying**: despite CLAUDE.md/the download script calling RSVQA-LR
+  "downloaded in full," the public Zenodo record's val/test question+answer JSONs are redacted
+  stubs (`{"id", "active"}` only, no question/answer text) — only the train split has real
+  content, and ~26% of even *that* file's entries are the same kind of stub mixed in among the
+  real ones. There is currently no true held-out RSVQA-LR split available locally for an honest
+  accuracy number; the spot-check above used train examples, which the checkpoint may have seen
+  during Google's own fine-tuning.
 - **`groundwater_potential`** (`backend/app/specialists/groundwater_adapter.py` + `backend/app/gee/`)
   — location-based, not image-based (`uses_images=False`, `requires_location=True`). Estimates
   groundwater favorability ("should I dig a well/tubewell here?") via a weighted overlay of GEE
@@ -246,8 +261,15 @@ current state in `data/raw/`:
   `github.com/YZHJessica/CDVQA` (hosted directly in the repo, not Drive — simpler than first
   planned). **Gap: no pixel data** — the actual pre/post image pairs come from the "SECOND" change
   detection dataset, not hosted in this repo; locating/downloading those images is still open.
-- **`download_rsvqa.py`** — RSVQA-LR in full (Zenodo `6344333`) + RSVQA-HR *test-split JSONs only*
-  (Zenodo `6344366`; its `Images.tar` alone is 13.5GB — `--hr-images` opts in).
+- **`download_rsvqa.py`** — RSVQA-LR (Zenodo `6344333`) + RSVQA-HR *test-split JSONs only*
+  (Zenodo `6344366`; its `Images.tar` alone is 13.5GB — `--hr-images` opts in). **Revised
+  finding** (discovered live-verifying the VQA tool): despite downloading every file the Zenodo
+  record offers, the LR val/test question+answer JSONs are redacted stubs (`{"id", "active"}`
+  only) — real question/answer text exists only in the train split, and even there ~26% of
+  entries are the same stub pattern mixed in. There is no true held-out RSVQA-LR split available
+  locally from this source; an honest accuracy eval needs either the withheld official test
+  answers (not publicly released, by design, for leaderboard integrity) or a self-defined
+  train/val split carved out of the real entries.
 - **`download_vrsbench.py`** — VRSBench eval-split annotation JSONs + `VRSBench_train.json` by
   default (~105MB); `Images_val.zip` (4GB) and `Images_train.zip` (8.4GB) are opt-in/Kaggle-side —
   bigger than CLAUDE.md's original estimate, since VRSBench bundles all images per split into one
