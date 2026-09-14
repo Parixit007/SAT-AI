@@ -3,7 +3,7 @@ from fastapi.testclient import TestClient
 
 import app.api.routes_query as routes_query
 from app.main import app
-from app.orchestrator.llm_providers.base import ToolCall
+from app.orchestrator.llm_providers.base import LLMProvider, ToolCall
 from tests.conftest import StubProvider
 
 
@@ -105,6 +105,47 @@ def test_upload_partial_failure_does_not_poison_the_whole_input_id(client, sampl
     r = client.post("/api/query", json={"input_id": input_id, "query_text": "how much water?"})
     assert r.status_code == 200
     assert r.json()["execution_trace"]["selected_task"] != "input_validation_failed"
+
+
+def test_query_falls_back_to_uploaded_images_own_geo_metadata(client, georeferenced_tif):
+    """_resolve_location's image-geo fallback (routes_query.py) had no test at all -- every
+    existing case here either supplies an explicit `location` or uploads a non-georeferenced
+    image. `input_id` being optional and location-only queries needing no upload are both
+    documented behaviors (CLAUDE.md); this is the other half -- an upload supplying the location
+    on its own, with no explicit `location` in the request at all."""
+    with open(georeferenced_tif, "rb") as f:
+        r = client.post("/api/upload", files={"files": ("geo.tif", f, "image/tiff")})
+    assert r.status_code == 200
+    body = r.json()
+    input_id = body["input_id"]
+    geo = body["images"][0]["geo"]
+    assert geo is not None  # sanity: the fixture is actually georeferenced
+
+    r = client.post("/api/query", json={"input_id": input_id, "query_text": "water?"})
+    assert r.status_code == 200
+    input_summary = r.json()["execution_trace"]["input_summary"]
+    assert f"{geo['center_lat']:.5f}" in input_summary
+    assert f"{geo['center_lon']:.5f}" in input_summary
+
+
+def test_query_returns_503_when_llm_provider_fails(monkeypatch, sample_image):
+    """The LLM-provider-failure -> clean 503 path (CLAUDE.md's other deliberate failure-handling
+    layer, alongside specialist failures -> trace warnings) had no test at all -- the `client`
+    fixture above always monkeypatches a working StubProvider, so this never got exercised."""
+
+    class BrokenProvider(LLMProvider):
+        def select_tools(self, query, tool_specs, input_summary):
+            raise RuntimeError("Groq request failed (some-model): 401 unauthorized")
+
+    monkeypatch.setattr(routes_query, "get_provider", lambda name: BrokenProvider())
+    broken_client = TestClient(app)
+
+    with open(sample_image, "rb") as f:
+        r = broken_client.post("/api/upload", files={"files": ("scene.png", f, "image/png")})
+    input_id = r.json()["input_id"]
+
+    r = broken_client.post("/api/query", json={"input_id": input_id, "query_text": "water?"})
+    assert r.status_code == 503
 
 
 def test_query_with_unknown_input_id_is_404(client):

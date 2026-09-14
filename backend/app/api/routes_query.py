@@ -31,6 +31,18 @@ def _resolve_location(payload: QueryRequest, image_paths: list) -> LatLon | None
     return None
 
 
+def _run_query_blocking(payload: QueryRequest, image_paths: list, provider, registry):
+    """Everything that does blocking I/O for one query: resolving the location (which re-opens
+    each image via validate_images for the geo fallback above) and then handle_query itself
+    (specialist model inference / GEE network calls). Both used to be split across the async/sync
+    boundary -- only handle_query ran via run_in_threadpool, while _resolve_location's own
+    PIL/rasterio work ran directly on the event loop despite being the same kind of blocking call
+    threadpooling handle_query was meant to keep off it."""
+    location = _resolve_location(payload, image_paths)
+    query_input = QueryInput(images=image_paths, location=location)
+    return handle_query(payload.query_text, query_input, provider, registry)
+
+
 @router.post("/query", response_model=QueryResponse)
 async def run_query(payload: QueryRequest) -> QueryResponse:
     image_paths = []
@@ -39,13 +51,9 @@ async def run_query(payload: QueryRequest) -> QueryResponse:
         if image_paths is None:
             raise HTTPException(status_code=404, detail=f"Unknown input_id '{payload.input_id}'. Upload images first.")
 
-    location = _resolve_location(payload, image_paths)
-    query_input = QueryInput(images=image_paths, location=location)
-
     try:
         provider = get_provider(settings.llm_provider)
-        # handle_query does blocking model-inference / GEE network calls -- keep it off the event loop.
-        result = await run_in_threadpool(handle_query, payload.query_text, query_input, provider, _registry)
+        result = await run_in_threadpool(_run_query_blocking, payload, image_paths, provider, _registry)
     except RuntimeError as exc:
         # Missing API key, or a provider SDK surfacing a config/auth problem -- report it as a
         # clean 503 rather than an opaque 500 (see backend/.env.example for setup).
