@@ -15,6 +15,7 @@ CHIRPS_DAILY = "UCSB-CHG/CHIRPS/DAILY"
 ESA_WORLDCOVER = "ESA/WorldCover/v200"
 JRC_SURFACE_WATER = "JRC/GSW1_4/GlobalSurfaceWater"
 ERA5_LAND_DAILY = "ECMWF/ERA5_LAND/DAILY_AGGR"
+FIRMS = "FIRMS"
 
 
 def elevation():
@@ -73,6 +74,28 @@ def surface_soil_moisture(end_date: str):
         .mean()
         .rename("soil_moisture")
     )
+
+
+def active_fire_collection(end_date: str, lookback_days: int):
+    """NASA FIRMS thermal-anomaly detections (MODIS collection 6, ~1km pixels, roughly 1-4
+    overpasses/day depending on latitude) over the `lookback_days` days ending `end_date`. Returns
+    the raw `ImageCollection` selected down to the two bands that matter -- `confidence` (0-100,
+    NASA's own documented scale: <30 low, 30-80 nominal, >80 high) and `T21` (fire-pixel
+    brightness temperature in Kelvin) -- unlike every other function in this file, which returns a
+    single already-time-collapsed `ee.Image`. Fire detection needs day-by-day presence/absence
+    (wildfire.py's `detection_days`/`most_recent_date`), so collapsing to one composite here would
+    throw away exactly the information that matters; `line_number` (a scan-line artifact) is
+    dropped since nothing here uses it.
+
+    Live-verified Sept 2026 over real western-US fire activity: confidence values spread 52-98,
+    T21 spread 308-380K (clear background land runs roughly 280-310K) -- consistent with NASA's
+    documented semantics, not just "the dataset loads." Most recent image at verification time was
+    2 days old (daily global mosaic cadence, actively updated)."""
+    import ee
+
+    end = ee.Date(end_date)
+    start = end.advance(-lookback_days, "day")
+    return ee.ImageCollection(FIRMS).filterDate(start, end).select(["confidence", "T21"])
 
 
 def land_cover():

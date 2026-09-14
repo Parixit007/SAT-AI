@@ -55,8 +55,8 @@ Both together: `preview_start` with name `"backend"` and `"frontend"` (see `.cla
 Copy `.env.example` (repo root) to `.env` and set `GEMINI_API_KEY` and/or `GROQ_API_KEY` before
 running real queries — without one, `/api/query` returns a clean 503, not a crash. Same pattern for
 `GEE_PROJECT_ID` / `GEE_SERVICE_ACCOUNT_EMAIL` / `GEE_SERVICE_ACCOUNT_KEY_FILE` (needed only for the
-`groundwater_potential` tool — see GEE section below); registering that tool always works, running
-it without these set raises a clean "not configured" 503 too.
+`groundwater_potential` and `wildfire_detection` tools — see GEE section below); registering those
+tools always works, running either without these set raises a clean "not configured" 503 too.
 
 ## Git workflow
 
@@ -250,6 +250,18 @@ readouts — rather than one decorative brand color. Keep new UI on those tokens
   dataset for every specialist. The already-downloaded `data/raw/bigearthnet/` shard
   (`download_bigearthnet.py --shard`) is Sentinel-2 (optical) only, confirmed via its own CSV
   manifest — not usable for fusion specifically.
+- **`wildfire_detection`** (`backend/app/specialists/wildfire_adapter.py` + `backend/app/gee/
+  wildfire.py`) — location-based like `groundwater_potential` (`uses_images=False`,
+  `requires_location=True`), not a trained model: a deterministic read of NASA FIRMS satellite
+  thermal-anomaly detections (~1km resolution) over a recent lookback window (default 10 days,
+  5km radius). Reports detection status (`No Fire Detected` / `Possible Fire Activity` / `Active
+  Fire Detected`, split at FIRMS' own confidence≥80 "high" threshold), how many of the recent days
+  had a hit, peak confidence, peak fire-pixel brightness temperature, and the most recent
+  detection date. Same pure/impure split as `groundwater.py`
+  (`classify_fire_activity()`/`fetch_recent_fire_activity()`). Live-verified end-to-end through
+  the real orchestrator against a real detected fire pixel (western US, Sept 2026): correctly
+  found zero detections at the 10-day default (the real hit was 12 days back) and correctly found
+  it — confidence 79, brightness 325K — at a 15-day window.
 
 ## Google Earth Engine (`backend/app/gee/`)
 
@@ -272,12 +284,15 @@ monkeypatched out — see that file's own docstring), so a from-scratch environm
   standard formula `TWI = ln(flow_accum / tan(slope))`), `UCSB-CHG/CHIRPS/DAILY` (rainfall),
   `ESA/WorldCover/v200` (land cover), `JRC/GSW1_4/GlobalSurfaceWater` (→ distance-to-water via
   `fastDistanceTransform`), `ECMWF/ERA5_LAND/DAILY_AGGR` (7-day trailing mean surface soil
-  moisture). The soil-moisture pick followed a live recency check, not just an existence check —
-  the two actual SMAP satellite products on Earth Engine were rejected after confirming their most
-  recent images were 4+ years and 14+ months stale respectively (both silently discontinued
-  mirrors), which would have made "current soil moisture" false. ERA5-Land is a reanalysis
-  (physically-based model informed by observations, not a direct satellite retrieval) but was
-  confirmed live and current to within days — chosen for genuine currency over data-source purity.
+  moisture), `FIRMS` (active-fire thermal anomalies — `confidence`/`T21` bands). The soil-moisture
+  pick followed a live recency check, not just an existence check — the two actual SMAP satellite
+  products on Earth Engine were rejected after confirming their most recent images were 4+ years
+  and 14+ months stale respectively (both silently discontinued mirrors), which would have made
+  "current soil moisture" false. ERA5-Land is a reanalysis (physically-based model informed by
+  observations, not a direct satellite retrieval) but was confirmed live and current to within
+  days — chosen for genuine currency over data-source purity. `active_fire_collection()` returns
+  the raw `ImageCollection`, not a single collapsed `ee.Image` like every other function here —
+  fire detection needs day-by-day presence/absence, which a single composite would discard.
 - **`gee/groundwater.py`** — deliberately split in two: `fetch_raw_layer_values()` (the Earth
   Engine I/O, needs live credentials, one `reduceRegion` for land cover since it's
   categorical/mode and a second covering the four continuous/mean layers — rainfall, TWI, soil
@@ -291,6 +306,16 @@ monkeypatched out — see that file's own docstring), so a from-scratch environm
   classifies into Very Low..Very High. A missing layer is excluded and remaining weights
   renormalized — never silently scored as 0. **When adding/tuning layers, keep this pure/impure
   split** — it's what makes the scoring logic testable at all without live GEE access.
+- **`gee/wildfire.py`** — same pure/impure split as `groundwater.py`:
+  `fetch_recent_fire_activity()` maps one `reduceRegion` per image in the lookback window
+  server-side (a single round trip, not a Python loop) vs. **`classify_fire_activity()`, pure
+  Python and fully unit-tested without GEE** — turns the list of per-day hits into a status
+  (`No Fire Detected` / `Possible Fire Activity` / `Active Fire Detected`, split at
+  `HIGH_CONFIDENCE_THRESHOLD = 80`, FIRMS' own documented nominal-vs-high boundary) plus peak
+  confidence/brightness and the most recent hit date. Stress-tested live against a region the size
+  of the whole western US (30 days) and hit Earth Engine's "too many concurrent aggregations"
+  limit — not a concern at this tool's real per-query scale (one point, a few-km radius) but worth
+  knowing before ever widening `radius_m`/`lookback_days` much past their defaults.
 - `groundwater_adapter.py`'s reported "confidence" is data completeness (how many of the 5 layers
   had data for that location), not a statistical confidence — this is a deterministic score, not a
   probabilistic model; documented in the tool description too so it isn't misrepresented in the UI.

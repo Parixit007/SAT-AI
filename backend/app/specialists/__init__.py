@@ -9,6 +9,7 @@ from app.specialists.grounding_adapter import TOOL_SPEC as GROUNDING_TOOL_SPEC
 from app.specialists.groundwater_adapter import TOOL_SPEC as GROUNDWATER_TOOL_SPEC
 from app.specialists.vqa_adapter import TOOL_SPEC as VQA_TOOL_SPEC
 from app.specialists.water_segmentation_adapter import TOOL_SPEC as WATER_SEG_TOOL_SPEC
+from app.specialists.wildfire_adapter import TOOL_SPEC as WILDFIRE_TOOL_SPEC
 
 
 def build_default_registry() -> ToolRegistry:
@@ -19,4 +20,5 @@ def build_default_registry() -> ToolRegistry:
     registry.register(GROUNDWATER_TOOL_SPEC)
     registry.register(CHANGE_DETECTION_TOOL_SPEC)
     registry.register(FUSION_TOOL_SPEC)
+    registry.register(WILDFIRE_TOOL_SPEC)
     return registry
