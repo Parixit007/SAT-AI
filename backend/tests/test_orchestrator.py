@@ -59,14 +59,26 @@ def test_no_tool_selected_is_a_valid_auditable_outcome(sample_image):
 
 
 def test_execution_trace_has_required_fields(sample_image):
+    """The spec requires an 'auditable execution summary containing the selected task,
+    model/tool names, and key parameters' (problem_statement.txt) -- checks every required field
+    actually holds a correct value for this scenario. (Previously this only asserted `hasattr` on
+    a dataclass's own declared fields, which is trivially true for any successfully-constructed
+    instance regardless of whether the values themselves are right -- e.g. a build that always
+    hardcoded confidence=0 would still have passed.)"""
     registry = build_default_registry()
     provider = StubProvider([ToolCall(tool_name="water_body_segmentation", arguments={})])
 
     result = handle_query("water?", QueryInput(images=[sample_image]), provider, registry)
     trace = result.trace
 
-    for field in ("selected_task", "tools_used", "input_summary", "confidence", "confidence_bucket", "warnings", "timestamp"):
-        assert hasattr(trace, field)
+    assert trace.selected_task == "water_body_segmentation"
+    assert trace.tools_used == [
+        {"name": "water_body_segmentation", "params": {}, "checkpoint_id": "water_body_unet_final.pt"}
+    ]
+    assert "1 image(s)" in trace.input_summary
+    assert 0.0 <= trace.confidence <= 1.0
+    assert trace.confidence_bucket in {"High", "Medium", "Low"}
+    assert trace.warnings == []
     assert trace.timestamp  # non-empty ISO timestamp
 
 

@@ -1,6 +1,22 @@
 from app.orchestrator.input_validation import validate_images
 
 
+def test_paired_images_with_mismatched_dimensions_warn_but_stay_ok(tmp_path):
+    import numpy as np
+    from PIL import Image
+
+    small = tmp_path / "small.png"
+    big = tmp_path / "big.png"
+    Image.fromarray(np.zeros((64, 64, 3), dtype=np.uint8)).save(small)
+    Image.fromarray(np.zeros((128, 128, 3), dtype=np.uint8)).save(big)
+
+    result = validate_images([small, big])
+
+    # A mismatch is a warning, not a hard error -- pair-based tools can still attempt the query.
+    assert result.ok
+    assert any("mismatched dimensions" in w for w in result.warnings)
+
+
 def test_plain_image_has_unknown_modality_and_no_geo(sample_image):
     result = validate_images([sample_image])
 
