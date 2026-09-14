@@ -1,10 +1,9 @@
-import { useEffect, useState } from "react";
-import type { LocationIn } from "../api/client";
+import { useEffect, useRef, useState } from "react";
+import { SendIcon } from "./icons";
 
-// Short labels, full prompts -- the full sentences were stacking three lines deep in the panel and
-// crowding out the controls underneath. From problem_statement.txt's "Representative Queries",
-// plus one for the groundwater tool. Some target specialists that don't exist yet; those come back
-// as "no tool matched", which is a legitimate (and visible) outcome.
+// Short labels, full prompts -- from problem_statement.txt's "Representative Queries", plus one
+// each for the groundwater and wildfire tools. Some target specialists that don't exist yet;
+// those come back as "no tool matched", which is a legitimate (and visible) outcome.
 const EXAMPLES: { label: string; prompt: string }[] = [
   { label: "Water body", prompt: "Highlight the water body referred to in the query." },
   { label: "Well siting", prompt: "Should I dig a well/tubewell at this location?" },
@@ -15,110 +14,73 @@ const EXAMPLES: { label: string; prompt: string }[] = [
     prompt: "Use the optical and SAR images together to identify built-up and water-covered regions.",
   },
   { label: "Built-up trend", prompt: "Has the built-up area increased, decreased, or remained unchanged?" },
+  { label: "Wildfire", prompt: "Is there any active wildfire near this location?" },
 ];
+
+const MAX_TEXTAREA_HEIGHT_PX = 160;
 
 interface Props {
   hasUpload: boolean;
+  hasLocation: boolean;
   submitting: boolean;
-  location: LocationIn | null;
-  onLocationChange: (loc: LocationIn | null) => void;
+  showExamples: boolean;
   onSubmit: (queryText: string) => void;
 }
 
-export function QueryBox({ hasUpload, submitting, location, onLocationChange, onSubmit }: Props) {
+export function QueryBox({ hasUpload, hasLocation, submitting, showExamples, onSubmit }: Props) {
   const [text, setText] = useState("");
-  const [lat, setLat] = useState("");
-  const [lon, setLon] = useState("");
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
 
-  // Keep the numeric fields in step with map clicks, without clobbering what someone is mid-way
-  // through typing (the map is the source of truth only when it's the thing that changed).
+  // Auto-grow with content, capped so a long paste doesn't swallow the screen.
   useEffect(() => {
-    if (location) {
-      setLat(location.lat.toFixed(5));
-      setLon(location.lon.toFixed(5));
-    }
-  }, [location?.lat, location?.lon]);
+    const el = textareaRef.current;
+    if (!el) return;
+    el.style.height = "auto";
+    el.style.height = `${Math.min(el.scrollHeight, MAX_TEXTAREA_HEIGHT_PX)}px`;
+  }, [text]);
 
-  const commitTypedCoords = (nextLat: string, nextLon: string) => {
-    const parsedLat = Number(nextLat);
-    const parsedLon = Number(nextLon);
-    if (nextLat.trim() === "" || nextLon.trim() === "" || Number.isNaN(parsedLat) || Number.isNaN(parsedLon)) {
-      // Either field being blank/invalid makes the pair incomplete -- always clear location so
-      // the visible fields and the actual submitted location can never diverge. (Previously this
-      // only cleared when BOTH fields were empty, so clearing just one field left the old
-      // location silently queued for submission while the box showed something else.)
-      onLocationChange(null);
-      return;
-    }
-    onLocationChange({ lat: parsedLat, lon: parsedLon });
+  const canSubmit = text.trim().length > 0 && (hasUpload || hasLocation) && !submitting;
+
+  const submit = () => {
+    if (!canSubmit) return;
+    onSubmit(text.trim());
+    setText("");
   };
 
-  const canSubmit = text.trim().length > 0 && (hasUpload || location !== null) && !submitting;
-
   return (
-    <div className="query-block">
-      <textarea
-        rows={3}
-        placeholder="Ask about the imagery or the selected location…"
-        value={text}
-        onChange={(e) => setText(e.target.value)}
-      />
-
-      <div className="chip-row">
-        {EXAMPLES.map((e) => (
-          <button key={e.label} className="chip" onClick={() => setText(e.prompt)} title={e.prompt}>
-            {e.label}
-          </button>
-        ))}
-      </div>
-
-      <div className="coord-field">
-        <div className="coord-inputs">
-          <input
-            aria-label="Latitude"
-            type="number"
-            step="any"
-            placeholder="lat"
-            value={lat}
-            onChange={(e) => {
-              setLat(e.target.value);
-              commitTypedCoords(e.target.value, lon);
-            }}
-          />
-          <input
-            aria-label="Longitude"
-            type="number"
-            step="any"
-            placeholder="lon"
-            value={lon}
-            onChange={(e) => {
-              setLon(e.target.value);
-              commitTypedCoords(lat, e.target.value);
-            }}
-          />
-          {location && (
-            <button
-              className="coord-clear"
-              onClick={() => {
-                setLat("");
-                setLon("");
-                onLocationChange(null);
-              }}
-              title="Clear location"
-            >
-              Clear
+    <div className="composer-inner">
+      {showExamples && (
+        <div className="chip-row">
+          {EXAMPLES.map((e) => (
+            <button key={e.label} className="chip" onClick={() => setText(e.prompt)} title={e.prompt}>
+              {e.label}
             </button>
-          )}
+          ))}
         </div>
-      </div>
-
-      <button className="run-button" disabled={!canSubmit} onClick={() => onSubmit(text.trim())}>
-        {submitting ? "Running" : "Run query"}
-      </button>
-
-      {!hasUpload && !location && (
-        <p className="rail-hint">Click the map or add imagery to enable the query.</p>
       )}
+
+      <div className="composer-row">
+        <textarea
+          ref={textareaRef}
+          rows={1}
+          placeholder={
+            hasUpload || hasLocation
+              ? "Ask about the imagery or the selected location…"
+              : "Attach imagery or open the map to set a location…"
+          }
+          value={text}
+          onChange={(e) => setText(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === "Enter" && !e.shiftKey) {
+              e.preventDefault();
+              submit();
+            }
+          }}
+        />
+        <button className="send-btn" disabled={!canSubmit} onClick={submit} aria-label="Send query">
+          <SendIcon />
+        </button>
+      </div>
     </div>
   );
 }
