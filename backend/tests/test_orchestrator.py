@@ -19,6 +19,21 @@ def test_routes_to_correct_tool(sample_image):
     assert result.confidence_bucket in {"High", "Medium", "Low"}
 
 
+def test_routes_bitemporal_query_to_change_detection(change_pair_images):
+    before, after, _ = change_pair_images
+    registry = build_default_registry()
+    provider = StubProvider([ToolCall(tool_name="change_detection", arguments={})])
+
+    result = handle_query(
+        "What changed between these two dates?", QueryInput(images=[before, after]), provider, registry
+    )
+
+    assert result.trace.selected_task == "change_detection"
+    assert result.trace.tools_used[0]["name"] == "change_detection"
+    assert result.trace.tools_used[0]["checkpoint_id"] is None
+    assert 0.0 <= result.confidence <= 1.0
+
+
 def test_incompatible_input_is_rejected_not_executed(sample_image, tmp_path):
     import shutil
 
