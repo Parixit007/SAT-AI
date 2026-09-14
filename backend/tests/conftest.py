@@ -45,6 +45,24 @@ def plain_tif(tmp_path: Path) -> Path:
 
 
 @pytest.fixture
+def change_pair_images(tmp_path: Path) -> tuple[Path, Path, list[int]]:
+    """A bi-temporal pair with a KNOWN injected difference -- a solid block pasted into one corner
+    of an otherwise-identical low-contrast background, so change-detection tests can assert against
+    an exact expected bbox rather than just "some change was found somewhere"."""
+    rng = np.random.default_rng(3)
+    base = rng.integers(80, 120, size=(128, 128, 3), dtype=np.uint8)  # muted, low-contrast background
+    before = base.copy()
+    after = base.copy()
+    after[20:60, 70:110] = [240, 30, 30]  # rows 20-60, cols 70-110 -- a bright, high-contrast block
+
+    before_path = tmp_path / "before.png"
+    after_path = tmp_path / "after.png"
+    Image.fromarray(before).save(before_path)
+    Image.fromarray(after).save(after_path)
+    return before_path, after_path, [70, 20, 110, 60]  # [x1, y1, x2, y2]
+
+
+@pytest.fixture
 def exif_gps_jpeg(tmp_path: Path) -> Path:
     """A JPEG with EXIF GPS tags set to Sydney's approximate coordinates (S/E hemisphere)."""
     from PIL.ExifTags import Base, GPS

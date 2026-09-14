@@ -6,7 +6,20 @@ follow-up), so a real accuracy check has to wait for that."""
 import pytest
 
 from app.orchestrator.tool_registry import QueryInput
+from app.specialists.change_detection_adapter import TOOL_SPEC as CHANGE_DETECTION_TOOL_SPEC
+from app.specialists.change_detection_adapter import _handle as change_handle
 from app.specialists.water_segmentation_adapter import _handle as water_handle
+
+
+def test_change_detection_tool_is_registered():
+    spec = CHANGE_DETECTION_TOOL_SPEC
+
+    assert spec.name == "change_detection"
+    assert spec.uses_images is True
+    assert spec.min_images == 2 and spec.max_images == 2
+    assert spec.compatible_modalities == ["optical"]
+    assert spec.requires_location is False
+    assert spec.checkpoint_id is None  # Stage 1 is training-free
 
 
 def test_water_segmentation_smoke(sample_image):
@@ -31,6 +44,27 @@ def test_water_segmentation_respects_custom_threshold(sample_image):
     # extremes tested here instead.
     assert 0.5 <= low.confidence <= 1.0
     assert 0.5 <= high.confidence <= 1.0
+
+
+def test_change_detection_finds_the_known_injected_region(change_pair_images):
+    before, after, expected_bbox = change_pair_images
+
+    result = change_handle(QueryInput(images=[before, after]), {})
+
+    assert result.tool_name == "change_detection"
+    assert 0.0 <= result.confidence <= 1.0
+    assert result.structured_data["largest_region_bbox"] == expected_bbox
+    # The injected block is a 40x40 region in a 128x128 image -- ~9.8% of the area.
+    assert result.structured_data["change_fraction"] == pytest.approx(1600 / (128 * 128), abs=0.005)
+    assert result.evidence_image_path is not None
+    assert result.evidence_image_path.exists()
+
+
+def test_change_detection_reports_no_change_for_identical_images(sample_image):
+    result = change_handle(QueryInput(images=[sample_image, sample_image]), {})
+
+    assert result.structured_data["change_fraction"] == 0.0
+    assert result.structured_data["largest_region_bbox"] is None
 
 
 def test_grounding_smoke(sample_image):

@@ -8,6 +8,7 @@ google-genai
 groq
 pillow
 numpy
+scipy
 torch
 segmentation-models-pytorch
 transformers
