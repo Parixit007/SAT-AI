@@ -639,22 +639,22 @@
 }
 
 /* Below ~900px the centered 820px-max chat column reaches close enough to the viewport edge that
-   a vertically-centered right-edge FAB (fine on a wide desktop, where there's a big empty margin
-   on both sides) starts overlapping real content -- the example chips in particular, since they
-   wrap across the column's full width. Docking it to the bottom-right corner instead, clear of
-   both the header and the composer, sidesteps the overlap at every width below that rather than
-   just hiding the symptom at one specific breakpoint. */
+   a right-edge FAB starts overlapping real content -- the example chips in particular, since they
+   wrap across the composer's full width and their row count (so their total height) varies with
+   viewport width. A fixed top/bottom offset was tried first and rejected: it dodges the collision
+   only at the exact content height it was tuned against, and breaks again the moment the chip row
+   wraps differently. Reserving right-padding on the composer instead is height-independent -- it
+   narrows the space content can occupy at all, so nothing ever reaches the FAB regardless of how
+   many rows the chips wrap into. */
 @media (max-width: 900px) {
-  .map-fab {
-    top: auto;
-    bottom: 108px;
-    transform: none;
+  .composer {
+    padding-right: 78px;
   }
-  .map-fab:hover:not(:disabled) {
-    transform: scale(1.07);
-  }
-  .map-fab:active:not(:disabled) {
-    transform: scale(0.95);
+  /* The FAB stays vertically centered at every width, so a right-aligned user bubble could in
+     principle scroll to sit at that same height -- reserve the same clearance here too, not just
+     in the composer. */
+  .chat-scroll {
+    padding-right: 78px;
   }
 }
 
@@ -664,16 +664,17 @@
   }
   .chat-scroll {
     padding: 20px 14px 10px;
+    padding-right: 68px;
   }
   .composer {
     padding: 8px 12px 16px;
+    padding-right: 68px;
   }
   .msg-bubble {
     max-width: 92%;
   }
   .map-fab {
     right: 14px;
-    bottom: 96px;
     width: 48px;
     height: 48px;
   }
