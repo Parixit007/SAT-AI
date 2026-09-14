@@ -1,6 +1,6 @@
 """Groundwater-potential scoring: a deterministic weighted overlay of satellite-derived layers
-(rainfall, topographic wetness, land cover, distance to surface water), following the published
-"Groundwater Potential Zone" (GPZ) mapping methodology. Deliberately split in two:
+(rainfall, topographic wetness, soil moisture, land cover, distance to surface water), following
+the published "Groundwater Potential Zone" (GPZ) mapping methodology. Deliberately split in two:
 
   - `fetch_raw_layer_values()` talks to Earth Engine (network I/O, needs real credentials to run
     or meaningfully test -- see the plan's Verification section).
@@ -15,10 +15,18 @@ from dataclasses import dataclass, field
 from datetime import date
 from typing import Optional
 
-WEIGHTS = {"rainfall": 0.30, "twi": 0.30, "dist_to_water": 0.20, "landcover": 0.20}
+# Rebalanced when soil_moisture was added: rainfall/TWI keep the same *relative* weight to each
+# other (still the two highest, still equal to each other) and to the original two, just all
+# scaled down to make room -- soil moisture gets a real but not dominant weight, reflecting that
+# it's a direct current-condition measurement (arguably more informative moment-to-moment than
+# land cover) but topographic/rainfall drivers remain more predictive of long-term groundwater
+# potential than a snapshot of recent surface moisture. Provisional starting point, like the
+# original four -- not rigorously fit, calibrate against real local well outcomes once available.
+WEIGHTS = {"rainfall": 0.25, "twi": 0.25, "soil_moisture": 0.20, "dist_to_water": 0.15, "landcover": 0.15}
 
 RAINFALL_RANGE_MM = (0.0, 2500.0)  # annual mm; higher = better (more recharge)
 TWI_RANGE = (2.0, 15.0)  # topographic wetness index; higher = better (water accumulates)
+SOIL_MOISTURE_RANGE = (0.0, 0.5)  # m^3/m^3 volumetric water content; higher = better (more water present)
 DIST_TO_WATER_RANGE_M = (0.0, 5000.0)  # meters; CLOSER = better (inverted during normalization)
 
 # ESA WorldCover v200 class codes -> recharge suitability, 0 (poor) to 1 (good). Built-up/impervious
@@ -83,6 +91,9 @@ def compute_groundwater_score(raw: dict[str, Optional[float]]) -> GroundwaterSco
     layers: dict[str, LayerScore] = {
         "rainfall": LayerScore(raw.get("rainfall"), _normalize(raw.get("rainfall"), *RAINFALL_RANGE_MM)),
         "twi": LayerScore(raw.get("twi"), _normalize(raw.get("twi"), *TWI_RANGE)),
+        "soil_moisture": LayerScore(
+            raw.get("soil_moisture"), _normalize(raw.get("soil_moisture"), *SOIL_MOISTURE_RANGE)
+        ),
         "dist_to_water": LayerScore(
             raw.get("dist_to_water"), _normalize(raw.get("dist_to_water"), *DIST_TO_WATER_RANGE_M, invert=True)
         ),
@@ -124,9 +135,11 @@ def fetch_raw_layer_values(lat: float, lon: float, radius_m: float = 1000.0) -> 
     region = point.buffer(radius_m)
     scale = 30  # meters -- matches SRTM/WorldCover native resolution
 
+    today = date.today().isoformat()
     continuous = (
-        L.annual_rainfall_mm(date.today().isoformat())
+        L.annual_rainfall_mm(today)
         .addBands(L.topographic_wetness_index())
+        .addBands(L.surface_soil_moisture(today))
         .addBands(L.distance_to_water_m())
     )
     continuous_stats = continuous.reduceRegion(
@@ -139,6 +152,7 @@ def fetch_raw_layer_values(lat: float, lon: float, radius_m: float = 1000.0) -> 
     return {
         "rainfall": continuous_stats.get("rainfall"),
         "twi": continuous_stats.get("twi"),
+        "soil_moisture": continuous_stats.get("soil_moisture"),
         "dist_to_water": continuous_stats.get("dist_to_water"),
         "landcover": landcover_stats.get("landcover"),
     }

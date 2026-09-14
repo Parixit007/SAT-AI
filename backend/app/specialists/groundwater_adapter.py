@@ -12,8 +12,8 @@ from app.orchestrator.tool_registry import QueryInput, ToolResult, ToolSpec
 
 def _data_completeness_confidence(score: GroundwaterScore) -> float:
     """Not a statistical confidence -- this is a deterministic GIS score, not a probabilistic
-    model prediction. "Confidence" here is data completeness (how many of the 4 layers had data
-    for this location), so the UI doesn't overstate certainty it doesn't have."""
+    model prediction. "Confidence" here is data completeness (how many of the layers -- currently
+    5 -- had data for this location), so the UI doesn't overstate certainty it doesn't have."""
     total = len(score.layers)
     if total == 0:
         return 0.0
@@ -70,8 +70,9 @@ TOOL_SPEC = ToolSpec(
     name="groundwater_potential",
     description=(
         "Estimate groundwater potential -- how favorable a location is for finding water if "
-        "digging a well or tubewell -- from satellite-derived rainfall, topographic wetness, land "
-        "cover, and proximity to surface water. Returns a Very Low..Very High rating. This is a "
+        "digging a well or tubewell -- from satellite-derived rainfall, topographic wetness, "
+        "recent soil moisture, land cover, and proximity to surface water. Returns a Very "
+        "Low..Very High rating. This is a "
         "heuristic screening estimate from public satellite data, not a substitute for a "
         "professional hydrogeological survey or test drilling. Use this for queries about "
         "groundwater, well/tubewell siting, or water availability underground at a location."

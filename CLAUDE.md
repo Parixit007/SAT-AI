@@ -271,17 +271,27 @@ monkeypatched out — see that file's own docstring), so a from-scratch environm
   `WWF/HydroSHEDS/15ACC` (flow accumulation, combined with slope for topographic wetness index —
   standard formula `TWI = ln(flow_accum / tan(slope))`), `UCSB-CHG/CHIRPS/DAILY` (rainfall),
   `ESA/WorldCover/v200` (land cover), `JRC/GSW1_4/GlobalSurfaceWater` (→ distance-to-water via
-  `fastDistanceTransform`).
+  `fastDistanceTransform`), `ECMWF/ERA5_LAND/DAILY_AGGR` (7-day trailing mean surface soil
+  moisture). The soil-moisture pick followed a live recency check, not just an existence check —
+  the two actual SMAP satellite products on Earth Engine were rejected after confirming their most
+  recent images were 4+ years and 14+ months stale respectively (both silently discontinued
+  mirrors), which would have made "current soil moisture" false. ERA5-Land is a reanalysis
+  (physically-based model informed by observations, not a direct satellite retrieval) but was
+  confirmed live and current to within days — chosen for genuine currency over data-source purity.
 - **`gee/groundwater.py`** — deliberately split in two: `fetch_raw_layer_values()` (the Earth
-  Engine I/O, needs live credentials, two separate `reduceRegion` calls since land cover is
-  categorical/mode and the rest are continuous/mean) vs. **`compute_groundwater_score()`, which is
+  Engine I/O, needs live credentials, one `reduceRegion` for land cover since it's
+  categorical/mode and a second covering the four continuous/mean layers — rainfall, TWI, soil
+  moisture, distance-to-water, batched into one call) vs. **`compute_groundwater_score()`, which is
   pure Python and fully unit-tested without any GEE dependency** — normalizes each raw layer 0-1
-  (see `RAINFALL_RANGE_MM`/`TWI_RANGE`/`DIST_TO_WATER_RANGE_M`/`LAND_COVER_SUITABILITY`, all
-  provisional starting points per the plan, not rigorously fit), applies AHP-style weights
-  (`WEIGHTS`), classifies into Very Low..Very High. A missing layer is excluded and remaining
-  weights renormalized — never silently scored as 0. **When adding/tuning layers, keep this
-  pure/impure split** — it's what makes the scoring logic testable at all without live GEE access.
-- `groundwater_adapter.py`'s reported "confidence" is data completeness (how many of the 4 layers
+  (see `RAINFALL_RANGE_MM`/`TWI_RANGE`/`SOIL_MOISTURE_RANGE`/`DIST_TO_WATER_RANGE_M`/
+  `LAND_COVER_SUITABILITY`, all provisional starting points per the plan, not rigorously fit),
+  applies AHP-style weights (`WEIGHTS` — currently rainfall 0.25, twi 0.25, soil_moisture 0.20,
+  dist_to_water 0.15, landcover 0.15; rainfall/TWI kept equal to each other and scaled down
+  together when soil moisture was added, rather than every weight shifting independently),
+  classifies into Very Low..Very High. A missing layer is excluded and remaining weights
+  renormalized — never silently scored as 0. **When adding/tuning layers, keep this pure/impure
+  split** — it's what makes the scoring logic testable at all without live GEE access.
+- `groundwater_adapter.py`'s reported "confidence" is data completeness (how many of the 5 layers
   had data for that location), not a statistical confidence — this is a deterministic score, not a
   probabilistic model; documented in the tool description too so it isn't misrepresented in the UI.
 

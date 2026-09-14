@@ -21,27 +21,32 @@ from tests.conftest import StubProvider
 def test_all_favorable_inputs_score_very_high():
     # cropland's own suitability constant is 0.65 (no land-cover class maps to a full 1.0 -- by
     # design, see LAND_COVER_SUITABILITY), so max achievable overall here is
-    # 0.30*1 + 0.30*1 + 0.20*1 + 0.20*0.65 = 0.93, not 1.0.
-    raw = {"rainfall": 2500.0, "twi": 15.0, "dist_to_water": 0.0, "landcover": 40}  # cropland
+    # 0.25*1 + 0.25*1 + 0.20*1 + 0.15*1 + 0.15*0.65 = 0.9475, not 1.0.
+    raw = {
+        "rainfall": 2500.0, "twi": 15.0, "soil_moisture": 0.5, "dist_to_water": 0.0, "landcover": 40,
+    }  # cropland
     score = compute_groundwater_score(raw)
 
     assert score.category == "Very High"
-    assert score.overall_score == pytest.approx(0.93, abs=0.01)
+    assert score.overall_score == pytest.approx(0.9475, abs=0.01)
     assert score.missing_layers == []
 
 
 def test_all_unfavorable_inputs_score_very_low():
-    # built-up's suitability constant is 0.1 (not 0.0), so overall = 0.20*0.1 = 0.02, not exactly 0.
-    raw = {"rainfall": 0.0, "twi": 2.0, "dist_to_water": 5000.0, "landcover": 50}  # built-up
+    # built-up's suitability constant is 0.1 (not 0.0), so overall = 0.15*0.1 = 0.015, not exactly 0.
+    raw = {
+        "rainfall": 0.0, "twi": 2.0, "soil_moisture": 0.0, "dist_to_water": 5000.0, "landcover": 50,
+    }  # built-up
     score = compute_groundwater_score(raw)
 
     assert score.category == "Very Low"
-    assert score.overall_score == pytest.approx(0.02, abs=0.01)
+    assert score.overall_score == pytest.approx(0.015, abs=0.01)
 
 
 def test_missing_layer_is_excluded_not_zeroed():
-    complete = compute_groundwater_score({"rainfall": 2500.0, "twi": 15.0, "dist_to_water": 0.0, "landcover": 40})
-    missing_rainfall = compute_groundwater_score({"rainfall": None, "twi": 15.0, "dist_to_water": 0.0, "landcover": 40})
+    favorable = {"rainfall": 2500.0, "twi": 15.0, "soil_moisture": 0.4, "dist_to_water": 0.0, "landcover": 40}
+    complete = compute_groundwater_score(favorable)
+    missing_rainfall = compute_groundwater_score({**favorable, "rainfall": None})
 
     assert "rainfall" in missing_rainfall.missing_layers
     # A missing layer should be excluded (weights renormalized), not scored as 0 -- so the
@@ -54,32 +59,52 @@ def test_landcover_floating_point_noise_from_ee_reducer_is_not_dropped():
     # Regression test: a live Earth Engine mode-reducer returned 49.999999999999996 for what's
     # semantically class 50 -- int() truncates that to 49 (a lookup miss), round() correctly gets 50.
     score = compute_groundwater_score(
-        {"rainfall": 1000.0, "twi": 8.0, "dist_to_water": 1000.0, "landcover": 49.999999999999996}
+        {"rainfall": 1000.0, "twi": 8.0, "soil_moisture": 0.25, "dist_to_water": 1000.0, "landcover": 49.999999999999996}
     )
     assert "landcover" not in score.missing_layers
     assert score.layers["landcover"].normalized == LAND_COVER_SUITABILITY[50]
 
 
 def test_all_layers_missing_scores_zero_not_a_crash():
-    score = compute_groundwater_score({"rainfall": None, "twi": None, "dist_to_water": None, "landcover": None})
+    score = compute_groundwater_score(
+        {"rainfall": None, "twi": None, "soil_moisture": None, "dist_to_water": None, "landcover": None}
+    )
 
     assert score.overall_score == 0.0
     assert score.category == "Very Low"
-    assert set(score.missing_layers) == {"rainfall", "twi", "dist_to_water", "landcover"}
+    assert set(score.missing_layers) == {"rainfall", "twi", "soil_moisture", "dist_to_water", "landcover"}
 
 
 def test_unknown_landcover_class_code_is_treated_as_missing():
     # A WorldCover code not in LAND_COVER_SUITABILITY (shouldn't normally happen, but the lookup
     # must degrade gracefully rather than KeyError).
-    score = compute_groundwater_score({"rainfall": 1000.0, "twi": 8.0, "dist_to_water": 1000.0, "landcover": 999})
+    score = compute_groundwater_score(
+        {"rainfall": 1000.0, "twi": 8.0, "soil_moisture": 0.25, "dist_to_water": 1000.0, "landcover": 999}
+    )
 
     assert "landcover" in score.missing_layers
 
 
 def test_values_at_range_boundaries_do_not_error():
-    # Rainfall/dist_to_water beyond their normalization range should clip to [0,1], not error.
-    score = compute_groundwater_score({"rainfall": 10_000.0, "twi": -5.0, "dist_to_water": -100.0, "landcover": 10})
+    # Values beyond their normalization range should clip to [0,1], not error -- covers both
+    # directions (rainfall/soil_moisture too high, twi/dist_to_water too low).
+    score = compute_groundwater_score(
+        {"rainfall": 10_000.0, "twi": -5.0, "soil_moisture": 5.0, "dist_to_water": -100.0, "landcover": 10}
+    )
     assert 0.0 <= score.overall_score <= 1.0
+
+
+def test_soil_moisture_weight_is_real_but_not_dominant():
+    """Direct check on the rebalanced weights (WEIGHTS in groundwater.py) -- soil_moisture alone
+    swinging from worst to best should move the overall score by a real, visible amount, but not
+    by more than rainfall or twi (the two highest-weighted layers) would."""
+    base = {"rainfall": 1250.0, "twi": 8.5, "dist_to_water": 2500.0, "landcover": 40}
+    dry = compute_groundwater_score({**base, "soil_moisture": 0.0})
+    wet = compute_groundwater_score({**base, "soil_moisture": 0.5})
+
+    assert wet.overall_score > dry.overall_score
+    swing = wet.overall_score - dry.overall_score
+    assert 0.05 < swing < 0.30  # real movement, but soil_moisture's 0.20 weight caps how much
 
 
 # --- End-to-end routing through the real adapter, with GEE calls monkeypatched --------------
