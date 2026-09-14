@@ -161,11 +161,17 @@ readouts — rather than one decorative brand color. Keep new UI on those tokens
   the docstring at the top of that file. Device auto-selects `mps`/`cpu`.
 - **`water_segmentation/water_segmentation_tool.py`** (`WaterSegmentationTool`) — `smp.Unet`
   (resnet34, 256×256). `segment(image_path) -> {"mask", "water_fraction", "confidence"}`. Fully
-  installed and working. Preprocessing (ImageNet norm) is a best guess verified only on synthetic
-  images (inconclusive — see the file's own docstring); real validation needs actual satellite
-  imagery. **`notebooks/kaggle_finetune_water_unet.ipynb` trains a fresh checkpoint with this exact
-  preprocessing baked in, which would resolve that gap** — run it and swap the checkpoint once you
-  have a result that beats the current val_iou (0.7638).
+  installed and working. **Retrained 2026-09-14** via `notebooks/kaggle_finetune_water_unet.ipynb`
+  on Kaggle (T4, 20 epochs, ~14.5 min) — `val_iou` improved from the original checkpoint's 0.7638
+  to **0.7945** on real held-out validation data, and this notebook's preprocessing is now
+  confirmed to exactly match what this wrapper already assumed (ImageNet norm, bilinear resize to
+  256), closing the "unverified preprocessing" gap the old checkpoint had. Sanity-checked through
+  the real wrapper before swapping in, though only against a synthetic flat-color test image — the
+  model's own docstring already documents that synthetic images aren't a reliable check (confirmed
+  again here: both the old and new checkpoint call an unrealistic flat color block ~100% water) --
+  real validation still needs actual satellite imagery. The old checkpoint (0.7638) isn't kept
+  in-repo (checkpoints are gitignored) but the training log is preserved on the Kaggle kernel
+  (`satquery-water-unet`) if a comparison is ever needed.
 - All five image-based specialists (grounding, water segmentation, VQA, change detection, fusion)
   share one shape: a `*Tool` class with lazy imports + one inference method, plus a separate
   top-level `draw_*()` function for visualization.
