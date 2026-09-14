@@ -598,6 +598,29 @@
   height: 34px;
 }
 
+.drawer-mode-toggle {
+  display: flex;
+  gap: 4px;
+  padding: 12px 20px;
+  flex-shrink: 0;
+}
+
+.drawer-mode-toggle button {
+  flex: 1;
+  font-size: 12px;
+  padding: 7px 10px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: transparent;
+  color: var(--text-dim);
+}
+
+.drawer-mode-toggle button.is-active {
+  background: var(--water);
+  border-color: var(--water);
+  color: #fff;
+}
+
 .drawer-map-wrap {
   position: relative;
   height: 360px;
@@ -636,6 +659,41 @@
   color: var(--alert);
   background: var(--alert-dim);
   border-color: rgba(207, 68, 51, 0.3);
+}
+
+.drawer-hint {
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--text-dim);
+}
+
+.drawer-area-size {
+  font-family: var(--data);
+  font-size: 13px;
+  color: var(--water);
+}
+
+.drawer-capture-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.drawer-capture-actions .drawer-clear {
+  flex-shrink: 0;
+}
+
+.capture-btn {
+  flex: 1;
+  font-size: 13px;
+  font-weight: 500;
+  padding: 9px 14px;
+  background: var(--water);
+  border-color: var(--water);
+  color: #fff;
+}
+
+.capture-btn:hover:not(:disabled) {
+  background: #266aa3;
 }
 
 /* Below ~900px the centered 820px-max chat column reaches close enough to the viewport edge that
@@ -738,6 +796,18 @@
   inset: 6px;
   background: var(--water);
   border-radius: 50%;
+}
+
+/* Marks the first corner of an in-progress area selection -- smaller/hollower than .map-pin so it
+   reads as provisional (about to become part of a rectangle), not a committed location pick. */
+.map-corner-pin {
+  display: block;
+  width: 12px;
+  height: 12px;
+  border: 2px solid var(--water);
+  border-radius: 3px;
+  background: rgba(255, 255, 255, 0.6);
+  box-shadow: 0 0 0 2px rgba(255, 255, 255, 0.85);
 }
 
 .map-readout {

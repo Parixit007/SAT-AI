@@ -171,3 +171,73 @@ def test_query_with_explicit_location_and_no_input_id_is_accepted(client):
     r = client.post("/api/query", json={"query_text": "well here?", "location": {"lat": 12.9, "lon": 77.6}})
     assert r.status_code == 200
     assert "12.9" in r.json()["execution_trace"]["input_summary"]
+
+
+def _fake_capture_png_bytes() -> bytes:
+    import io
+
+    import numpy as np
+    from PIL import Image
+
+    arr = np.random.default_rng(0).integers(0, 255, size=(64, 64, 3), dtype=np.uint8)
+    buf = io.BytesIO()
+    Image.fromarray(arr).save(buf, format="PNG")
+    return buf.getvalue()
+
+
+def test_capture_area_returns_an_uploadable_image_with_exact_geo(client, monkeypatch):
+    """/api/capture should feed a map-selected rectangle through the exact same path a real
+    upload takes -- same response shape, immediately queryable. Written out as a real GeoTIFF (not
+    a plain PNG, tried first and reverted -- see esri_capture.py's docstring): geo/modality here
+    come from validate_images()'s ordinary GeoTIFF extraction, not a hand-constructed override, so
+    this also implicitly proves that re-validation at query time (routes_query.py re-opens the
+    file from scratch) sees the same "optical" + correct bounds, not just this response."""
+    import app.api.routes_upload as routes_upload
+
+    monkeypatch.setattr(routes_upload, "fetch_satellite_image", lambda *a, **kw: _fake_capture_png_bytes())
+
+    r = client.post("/api/capture", json={"min_lat": 12.9, "min_lon": 77.5, "max_lat": 13.0, "max_lon": 77.6})
+    assert r.status_code == 200
+    body = r.json()
+    assert len(body["images"]) == 1
+    img = body["images"][0]
+    assert img["format"] == "TIFF"
+    assert img["modality_guess"] == "optical"
+    geo = img["geo"]
+    assert geo["source"] == "geotiff"
+    assert geo["band_count"] == 3
+    assert geo["center_lat"] == pytest.approx(12.95, abs=1e-6)
+    assert geo["center_lon"] == pytest.approx(77.55, abs=1e-6)
+    assert geo["bounds_wgs84"] == pytest.approx([77.5, 12.9, 77.6, 13.0], abs=1e-6)
+
+    # The captured image should be immediately queryable, same as a real upload -- and still
+    # correctly "optical" on re-validation, not "unknown" (the bug a plain PNG had).
+    r = client.post("/api/query", json={"input_id": body["input_id"], "query_text": "how much water?"})
+    assert r.status_code == 200
+    trace = r.json()["execution_trace"]
+    assert trace["selected_task"] == "water_body_segmentation"
+    assert "modality=optical" in trace["input_summary"]
+
+
+def test_capture_area_rejects_inverted_or_degenerate_bounds(client):
+    # min >= max on either axis -- including the two being exactly equal, e.g. an accidental
+    # double-click on the same spot -- must be a clean 400, not silently accepted or a crash.
+    r = client.post("/api/capture", json={"min_lat": 13.0, "min_lon": 77.5, "max_lat": 12.9, "max_lon": 77.6})
+    assert r.status_code == 400
+
+    r = client.post("/api/capture", json={"min_lat": 12.9, "min_lon": 77.5, "max_lat": 12.9, "max_lon": 77.6})
+    assert r.status_code == 400
+
+
+def test_capture_area_surfaces_esri_failure_as_a_clean_503(client, monkeypatch):
+    import requests
+
+    import app.api.routes_upload as routes_upload
+
+    def _boom(*a, **kw):
+        raise requests.ConnectionError("no route to host")
+
+    monkeypatch.setattr(routes_upload, "fetch_satellite_image", _boom)
+
+    r = client.post("/api/capture", json={"min_lat": 12.9, "min_lon": 77.5, "max_lat": 13.0, "max_lon": 77.6})
+    assert r.status_code == 503
