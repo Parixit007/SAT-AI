@@ -140,23 +140,54 @@ query_id (`Content-Disposition: attachment`); a polished PDF/HTML export is futu
 
 ## Frontend (`frontend/src/`)
 
-Map-centric layout: a fixed 400px control panel (query → imagery → result, each its own
-`.panel-section`) beside a full-bleed Leaflet map (`components/MapPicker.tsx`). Three stacked,
-free, keyless Esri tile layers, not just raw imagery: World Imagery (satellite base) +
-Reference/World_Transportation (roads) + Reference/World_Boundaries_and_Places (country/state
-borders and place labels, topmost so text stays legible over the road lines) — all verified live
-before wiring in, same discipline as the GEE asset ids. No meaningfully higher-resolution free
-satellite alternative exists without an API key, so World Imagery stays the base; what changed is
-the hybrid labels/roads/borders overlay on top of it. The map is the location picker — clicking it
-sets `location`, which
-lives in `App.tsx` and flows down to both the map and `QueryBox`'s numeric lat/lon fields, so the
-two stay in sync either way you set it. A georeferenced upload auto-drops the pin at its own
-coordinates (see `handleUploaded`). Leaflet's default marker is a bundled PNG that breaks under
-Vite, so the pin is a `divIcon` styled via `.map-pin`.
+**Chat-first layout** (redesigned 2026-09-14 from an earlier fixed-panel/full-bleed-map layout):
+`App.tsx` holds a `messages: ChatMsg[]` conversation log (`components/ChatMessage.tsx` — user
+query bubbles right-aligned, assistant bubbles left-aligned with a `pending`/`done`/`error` status
+each), a scrolling `.chat-main` column capped at 820px and centered, and a persistent bottom
+`.composer` bar (`components/QueryBox.tsx` — auto-growing textarea, Enter to send/Shift+Enter for
+a newline, example-prompt chips shown only while the conversation is empty). Submitting pushes a
+user message plus a `pending` assistant message immediately, then replaces the pending one by id
+once `runQuery` resolves or rejects — never a single overwritten "last result" the way the old
+layout worked.
 
-Design tokens live in `index.css`: a cold slate-navy base plus four *semantic* accents (`--land`,
-`--water`, `--caution`, `--alert`) that map to meaning — confidence buckets, warnings, water
-readouts — rather than one decorative brand color. Keep new UI on those tokens.
+The map is **not** on-screen by default. A circular icon button (`.map-fab`, docked to the right
+edge — bottom-right on screens under 900px so it can't overlap the chip row, which happens at
+exactly the width where the centered chat column's content starts reaching the edge) toggles
+`components/MapDrawer.tsx`, a slide-in glass panel wrapping `components/MapPicker.tsx` plus the
+manual lat/lon entry fields (moved here from `QueryBox` — the composer no longer has inline
+coordinate inputs). The drawer is always mounted, not conditionally rendered, so the Leaflet
+instance and its tile cache survive between opens; `open` only toggles a CSS transform. A small
+green dot on the FAB and a compact location chip above the composer both reflect whether a
+location is currently set. Attaching imagery works the same way: a paperclip icon opens a small
+popover (`UploadPanel` inside `.attach-popover`) instead of a permanent panel section; attached
+files show as compact chips above the composer once uploaded.
+
+The map itself still uses the same three stacked, free, keyless Esri tile layers as before — World
+Imagery (satellite base) + Reference/World_Transportation (roads) + Reference/World_Boundaries_
+and_Places (borders/labels, topmost) — all verified live before wiring in. **Fixed a real jitter
+bug in this session**: `Recenter`'s `flyTo` was empirically confirmed jittery (a single click fired
+over a thousand tile requests across the animated path — instrumented live by monkey-patching
+`L.Map.prototype.flyTo` and reading network request volume, not guessed). The actual fix is each
+`TileLayer`'s `updateWhenZooming={false}` prop — Leaflet's own documented option for exactly this
+symptom (by default every stacked layer swaps in tiles at each intermediate zoom level *during*
+the flyTo animation; this makes each layer wait until the animation settles instead) — plus a
+longer `duration`/gentler `easeLinearity` so the settled motion itself reads as a deliberate pan.
+A single-flyTo-call check (also instrumented live) ruled out a StrictMode double-fire as a
+contributing cause. Leaflet's default marker is a bundled PNG that breaks under Vite, so the pin
+is a `divIcon` styled via `.map-pin`.
+
+**Light glassmorphism theme** (also new this session, replacing the earlier dark slate-navy
+theme): translucent, blurred (`backdrop-filter`) panels — header, composer bar, message bubbles,
+the map drawer, popovers — layered over three large, slowly-drifting blurred color blobs
+(`.bg-blobs` in `App.css`, pure CSS `@keyframes`, no library) fixed behind everything, since glass
+panels need real color behind them to visibly "frost" against — a flat background defeats the
+effect. Design tokens live in `index.css`: the same four *semantic* accents as before (`--land`,
+`--water`, `--caution`, `--alert` — confidence buckets, warnings, water readouts) recalibrated
+darker/more saturated than the old dark-theme values so they still hold contrast on light glass,
+plus `--glass`/`--glass-strong`/`--glass-border`/`--glass-shadow` tokens for the frosted surfaces.
+`color-scheme: light`; there is no dark-mode toggle. Keep new UI on those tokens. No new
+dependency was added for any of this (icons in `components/icons.tsx` are hand-written inline
+SVG, animations are plain CSS) — `frontend/package.json` is unchanged.
 
 ## Specialist models (`models/`)
 

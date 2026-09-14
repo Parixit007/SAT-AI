@@ -1,33 +1,39 @@
 :root {
-  /* Base -- a cold, desaturated slate-navy, not flat neutral black. Evokes a telemetry/radar
-     display rather than a generic "dark mode app." */
-  --ground: #0a0f1a;
-  --surface: #10182a;
-  --surface-raised: #16203572;
-  --border: #26324a;
-  --border-strong: #3a4968;
+  /* Light glass base -- soft, cool-neutral, built so translucent panels show real color through
+     backdrop-filter instead of sitting on flat white (see .bg-blobs in App.css). */
+  --bg-base: #eef2fa;
+  --bg-base-2: #f7f5ff;
 
-  --text: #c6cede;
-  --text-dim: #7c88a6;
-  --text-bright: #eef1f8;
+  --ground: #eef2fa;
+  --surface: #ffffff;
+  --glass: rgba(255, 255, 255, 0.56);
+  --glass-strong: rgba(255, 255, 255, 0.78);
+  --glass-border: rgba(255, 255, 255, 0.65);
+  --glass-shadow: 0 10px 40px rgba(31, 41, 82, 0.12), 0 2px 8px rgba(31, 41, 82, 0.06);
 
-  /* Semantic accents, drawn from real remote-sensing conventions -- each one means something
-     specific in this app (land/vegetation, water, moderate/caution, alert/low-confidence), not
-     one arbitrary brand color reused everywhere. */
-  --land: #5fb88c;
-  --land-dim: #5fb88c26;
-  --water: #4fa8d8;
-  --water-dim: #4fa8d826;
-  --caution: #d9a441;
-  --caution-dim: #d9a44126;
-  --alert: #d9614f;
-  --alert-dim: #d9614f26;
+  --border: rgba(31, 41, 82, 0.1);
+  --border-strong: rgba(31, 41, 82, 0.2);
+
+  --text: #333c54;
+  --text-dim: #6c7690;
+  --text-bright: #0e1424;
+
+  /* Semantic accents, same meanings as before (land/water/caution/alert), deepened from the old
+     dark theme's palette so they still hold contrast against light glass instead of near-black. */
+  --land: #1f9968;
+  --land-dim: rgba(31, 153, 104, 0.14);
+  --water: #2f7fc4;
+  --water-dim: rgba(47, 127, 196, 0.14);
+  --caution: #b3781e;
+  --caution-dim: rgba(179, 120, 30, 0.14);
+  --alert: #cf4433;
+  --alert-dim: rgba(207, 68, 51, 0.14);
 
   --display: "Space Grotesk", "Inter", system-ui, sans-serif;
   --body: "Inter", system-ui, sans-serif;
   --data: "JetBrains Mono", ui-monospace, "SF Mono", monospace;
 
-  color-scheme: dark;
+  color-scheme: light;
   color: var(--text);
   background: var(--ground);
   font-synthesis: none;
@@ -67,4 +73,30 @@ button,
 input,
 textarea {
   font-family: inherit;
+}
+
+::selection {
+  background: var(--water-dim);
+  color: var(--text-bright);
+}
+
+/* Thin, quiet scrollbars -- the chat column scrolls a lot, a heavy default scrollbar fights the
+   glass aesthetic. */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--border-strong) transparent;
+}
+
+*::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+*::-webkit-scrollbar-thumb {
+  background: var(--border-strong);
+  border-radius: 8px;
+}
+
+*::-webkit-scrollbar-track {
+  background: transparent;
 }
