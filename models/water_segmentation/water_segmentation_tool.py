@@ -65,7 +65,11 @@ class WaterSegmentationTool:
             device = "mps" if torch.backends.mps.is_available() else "cpu"
         self.device = device
 
-        checkpoint = torch.load(checkpoint_path, map_location="cpu", weights_only=False)
+        # weights_only=True (not False): the checkpoint dict is only tensors + plain Python
+        # builtins (str/int/float, see kaggle_finetune_water_unet.ipynb's export cell) -- no
+        # reason to allow arbitrary unpickling for this format, unlike Grounding DINO's checkpoints
+        # elsewhere in this project, which do bundle an argparse.Namespace and need False.
+        checkpoint = torch.load(checkpoint_path, map_location="cpu", weights_only=True)
         self.img_size = checkpoint["img_size"]
         self.val_iou = checkpoint.get("val_iou")
 

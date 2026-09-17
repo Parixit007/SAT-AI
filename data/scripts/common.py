@@ -3,6 +3,7 @@ already exist at the expected size) and ends by printing a file-count/size summa
 eyeball success -- silent partial failures (especially Google-Drive quota/interstitial issues) are
 the main risk per CLAUDE.md's data-acquisition notes."""
 
+import os
 import sys
 from pathlib import Path
 
@@ -28,22 +29,35 @@ def print_summary(dest_dir: Path) -> None:
 
 def download_url(url: str, dest_path: Path, expected_min_bytes: int = 1024) -> bool:
     """Plain streaming HTTP download. Skips if dest_path already exists and looks complete
-    (>= expected_min_bytes). Returns True on success."""
+    (>= expected_min_bytes). Returns True on success.
+
+    Writes to a `.part` sibling and only `os.replace()`s it onto `dest_path` once the whole
+    download has streamed through without error -- previously this wrote straight to `dest_path`,
+    so a connection drop mid-download left a truncated file sitting at the real destination,
+    which the size check above would then treat as "already present" forever after (the
+    "exists and is non-empty" check has no way to tell a truncated file from a complete one
+    once it's already at the final path). A `.part` file left behind by an interrupted run is
+    never at `dest_path`, so the next invocation correctly sees the real file as missing and
+    retries -- `os.replace` is atomic on both POSIX and Windows, so a reader can never observe a
+    half-written `dest_path` either."""
     if dest_path.exists() and dest_path.stat().st_size >= expected_min_bytes:
         print(f"[skip] {dest_path.name} already present", file=sys.stderr)
         return True
 
     dest_path.parent.mkdir(parents=True, exist_ok=True)
+    part_path = dest_path.with_suffix(dest_path.suffix + ".part")
     print(f"[get] {url} -> {dest_path}", file=sys.stderr)
     try:
         with requests.get(url, stream=True, timeout=60) as resp:
             resp.raise_for_status()
-            with open(dest_path, "wb") as f:
+            with open(part_path, "wb") as f:
                 for chunk in resp.iter_content(chunk_size=CHUNK_SIZE):
                     f.write(chunk)
+        os.replace(part_path, dest_path)
         return True
     except requests.RequestException as exc:
         print(f"[error] failed to download {url}: {exc}", file=sys.stderr)
+        part_path.unlink(missing_ok=True)  # don't leave a stale partial file behind
         return False
 
 

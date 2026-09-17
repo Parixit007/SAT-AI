@@ -31,10 +31,15 @@ def slope_degrees():
 
 
 def topographic_wetness_index():
-    """TWI = ln(flow_accumulation / tan(slope)) -- the standard formula (higher = more water
-    accumulation potential: valley bottoms and flat areas with large upstream contributing areas).
+    """TWI = ln((flow_accumulation + 1) / tan(slope)) -- the standard formula
+    (higher = more water accumulation potential: valley bottoms and flat areas with large
+    upstream contributing areas), with a `+1` on flow_accumulation that the textbook formula
+    doesn't have: ridge/drainage-divide cells can have flow_accumulation=0 (no upstream
+    contributing area at all), and ln(0) is -inf, which would poison the whole computation at
+    exactly the cells where TWI should legitimately be at its lowest -- +1 makes those cells
+    ln(1)=0 instead, a well-defined "no accumulation" floor rather than a blown-up computation.
     Flow accumulation is in upstream-cell-count units; slope is converted degrees->radians and
-    floored at a small epsilon so flat ground (tan(0)=0) doesn't divide by zero."""
+    floored at a small epsilon so flat ground (tan(0)=0) doesn't divide by zero either."""
     import ee
 
     flow_accum = ee.Image(HYDROSHEDS_FLOW_ACCUMULATION)

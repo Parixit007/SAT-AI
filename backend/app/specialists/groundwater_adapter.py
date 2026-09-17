@@ -3,11 +3,14 @@ GEE service account (see .env.example) -- registering the tool is always safe (m
 running it raises a clean RuntimeError (caught as a 503 in routes_query.py, same as the LLM
 providers) until GEE is actually set up."""
 
+import logging
 import uuid
 
 from app.config import EVIDENCE_DIR
 from app.gee.groundwater import GroundwaterScore, assess_groundwater_potential, render_thumbnail_url
 from app.orchestrator.tool_registry import QueryInput, ToolResult, ToolSpec
+
+logger = logging.getLogger(__name__)
 
 
 def _data_completeness_confidence(score: GroundwaterScore) -> float:
@@ -38,7 +41,10 @@ def _handle(query_input: QueryInput, arguments: dict) -> ToolResult:
         evidence_path = EVIDENCE_DIR / f"{uuid.uuid4().hex}.png"
         evidence_path.write_bytes(resp.content)
     except Exception:
-        pass  # thumbnail is a bonus -- don't sink the whole result over a rendering failure
+        # Thumbnail is a bonus -- don't sink the whole result over a rendering failure. Still
+        # worth a log line, not total silence: a *systematic* failure here (a broken thumbnail
+        # URL, GEE visualization params drifting invalid) would otherwise never surface anywhere.
+        logger.warning("Groundwater evidence thumbnail failed for (%s, %s)", lat, lon, exc_info=True)
 
     layer_bits = [
         f"{name}={ls.normalized:.2f}" if ls.normalized is not None else f"{name}=missing"
