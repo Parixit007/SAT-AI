@@ -414,13 +414,45 @@ Settings), checkpoints downloaded from the Output tab afterward.
   checkpoint currently in `models/grounding/checkpoints/`. 10-section pattern (setup → pretrained
   weights → data → ODVG conversion → COCO val subset → config patch → train → grounding-accuracy
   eval → export) — reuse this structure for any future training notebook.
-- **`kaggle_finetune_grounding_dino_v2_continued.ipynb`** — continues fine-tuning from the
-  *current* checkpoint (via Open-GroundingDino's `PRETRAIN_MODEL_PATH`, not `--resume`) and adds
-  VRSBench's 36,313 `[refer]` training examples alongside DIOR-RSVG (Open-GroundingDino's ODVG
-  config natively takes a *list* of `{root, anno}` train sources, so the two datasets don't need
-  physically merging). Requires uploading your current `dior_rsvg_finetuned.pth` as a Kaggle input
-  dataset first (instructions in the notebook's own cell 2b). Evaluates 3-way (zero-shot / your
-  current checkpoint / the new one) before you decide whether to replace anything locally.
+- **`kaggle_finetune_grounding_dino_v2_continued.ipynb`** — superseded, not deleted (kept for the
+  record). Added VRSBench on top of DIOR-RSVG; got cancelled by Kaggle
+  (`KernelWorkerStatus.CANCEL_ACKNOWLEDGED`) after consuming ~15 of the account's 30 weekly
+  GPU-hours — almost certainly its session time limit, not a training failure, and with
+  `save_checkpoint_interval=3` at `epochs=3` it likely never checkpointed before being cut. Not
+  worth resurrecting; v3 below replaces it with a smaller, safer budget.
+- **`kaggle_finetune_grounding_dino_v3_dota.ipynb`** — same continue-from-checkpoint approach as
+  v2, plus **DOTA** (fixed-category aerial object detection — plane/ship/storage-tank/harbor/
+  bridge/etc., 15-16 categories) added as a third train source via Open-GroundingDino's
+  *detection*-style ODVG format (fixed `label_map`, verified against the repo's own
+  `data_format.md`) rather than the grounding-style format DIOR-RSVG/VRSBench use. Sourced from
+  `kolos1/dota-coco-format` on Kaggle — pre-split into 512x512 patches with real COCO
+  (axis-aligned) annotations, verified directly by downloading and parsing its `instances_val.json`
+  before committing to it, not just trusting the listing. Sized down from v2 to fit inside one
+  session: `epochs=2` (not 3), `save_checkpoint_interval=1` (a checkpoint now survives every
+  epoch), both VRSBench and DOTA capped at a few thousand images rather than included in full.
+  **First real run (2026-09-17) actually succeeded** — 10h17m, real checkpoints saved
+  (`checkpoint0000.pth`/`checkpoint0001.pth`/`checkpoint_best_regular.pth`), sane periodic COCO
+  metrics (AP@0.5=0.243, AR@100=0.783) — but still showed `KernelWorkerStatus.ERROR` because its
+  own Section 9 (custom grounding-accuracy eval, which runs *after* training/export) crashed on
+  `ModuleNotFoundError: No module named 'groundingdino.datasets'`.
+  **Root cause, confirmed by cloning the real current repo and inspecting it directly (not
+  guessed)**: Open-GroundingDino has been restructured upstream since these notebooks were first
+  written — `datasets/`, `models/`, `tools/`, `config/` now live at the repo root, not nested under
+  `groundingdino/` (which itself only still has a `util/` subpackage). `groundingdino.util.inference`
+  — and the repo's own `tools/inference_on_a_image.py` — both still import the old nested paths and
+  are broken today against the current repo; this isn't specific to this project's usage. Fixed by
+  reimplementing `load_model`/`load_image`/`predict` directly against the paths `main.py` itself
+  successfully uses for training (`util.slconfig.SLConfig`, `models.build_model`,
+  `datasets.transforms`, plus `groundingdino.util.utils` — that one subpackage is still real).
+- **`kaggle_eval_grounding_dino_v3.ipynb`** — eval-only companion to v3, added because re-pushing
+  the *whole* v3 notebook to pick up the Section 9 fix would re-train from scratch (another 10+
+  hours, more than this account's remaining weekly GPU budget could afford after the first run).
+  Skips training entirely: loads the already-trained v3 checkpoint (uploaded as a Kaggle input
+  dataset the same way the "current" checkpoint always has been — `kaggle kernels push`'s
+  `kernel_sources` field, which in principle mounts another kernel's own output directly, was tried
+  first and rejected by the API as an invalid source; the manual download-then-upload path is the
+  one that's actually proven to work in this project) and runs the same fixed Acc@0.5/Acc@0.7/mIoU
+  protocol three ways (zero-shot / current v1 checkpoint / new v3 checkpoint).
 - **`kaggle_finetune_water_unet.ipynb`** — trains water-body segmentation from scratch (no prior
   notebook existed for this checkpoint) on the public "Satellite Images of Water Bodies" dataset
   (Kaggle, `franciscoescobar/satellite-images-of-water-bodies`, CC BY-NC-SA 4.0, 2841 image/mask
