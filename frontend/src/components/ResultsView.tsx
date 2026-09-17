@@ -7,13 +7,40 @@ const BUCKET_CLASS: Record<string, string> = {
   Low: "badge-low",
 };
 
+// What "confidence" actually means differs by tool -- some are real model scores, some are a
+// data-completeness fraction, some are a generation-likelihood proxy. Showing them all with an
+// identical badge invites reading them as the same kind of number, which they aren't (see each
+// adapter's own docstring, e.g. groundwater_adapter.py's _data_completeness_confidence). Keyed by
+// the exact ToolSpec.name values registered in backend/app/specialists/*_adapter.py.
+const CONFIDENCE_SEMANTICS: Record<string, string> = {
+  groundwater_potential:
+    "Data completeness, not a statistical confidence: the fraction of GEE layers that had data for this location.",
+  wildfire_detection:
+    "NASA FIRMS' own 0-100 detection confidence for the strongest hit, rescaled to 0-1 -- not a calibrated probability.",
+  visual_question_answering:
+    "Mean generated-token probability -- a generation-likelihood proxy, not a calibrated chance the answer is correct.",
+  change_detection:
+    "Otsu's between-class variance ratio -- how cleanly the pixel difference separates into changed/unchanged, a heuristic signal.",
+  optical_sar_fusion:
+    "Reconciliation-based: higher where the SAR and optical reads agree, lower where they disagree (surfaced, not averaged away).",
+  text_guided_grounding: "The grounding model's own detection score for the matched region.",
+  water_body_segmentation: "The segmentation model's own per-pixel confidence, averaged over the predicted mask.",
+};
+
+function confidenceTitle(result: QueryResponse): string | undefined {
+  const toolName = result.execution_trace.tools_used[0]?.name;
+  return toolName ? CONFIDENCE_SEMANTICS[toolName] : undefined;
+}
+
 export function ResultsView({ result }: { result: QueryResponse }) {
+  const semantics = confidenceTitle(result);
   return (
     <div className="result">
       <div className="result-header">
-        <span className={`badge ${BUCKET_CLASS[result.confidence_bucket]}`}>
+        <span className={`badge ${BUCKET_CLASS[result.confidence_bucket]}`} title={semantics}>
           {result.confidence_bucket}
           <span className="badge-value">{result.confidence.toFixed(2)}</span>
+          {semantics && <span className="badge-info" aria-hidden="true">ⓘ</span>}
         </span>
       </div>
 

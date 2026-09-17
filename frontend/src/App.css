@@ -990,6 +990,14 @@ button:disabled {
   letter-spacing: 0;
 }
 
+/* Hints that "confidence" means something different for this tool -- hover/long-press for the
+   real definition (native title tooltip, see ResultsView.tsx's CONFIDENCE_SEMANTICS). */
+.badge-info {
+  font-size: 11px;
+  opacity: 0.6;
+  cursor: help;
+}
+
 .badge-high {
   background: var(--land-dim);
   border-color: var(--land);

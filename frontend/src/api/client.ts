@@ -64,13 +64,32 @@ async function parseErrorDetail(response: Response): Promise<string> {
   }
 }
 
+// `response.json()` is typed `any` under the hood -- nothing previously caught a backend field
+// rename before it silently rendered as `undefined` somewhere deep in a component. Not a full
+// schema validation (no new dependency for this) -- just the top-level keys each interface
+// declares, which is exactly what a rename/typo would actually break.
+function assertShape(body: unknown, requiredKeys: string[], context: string): void {
+  if (typeof body !== "object" || body === null) {
+    throw new Error(`${context}: expected a JSON object in the response, got ${typeof body}`);
+  }
+  const missing = requiredKeys.filter((key) => !(key in (body as Record<string, unknown>)));
+  if (missing.length > 0) {
+    throw new Error(`${context}: response is missing expected field(s) ${missing.join(", ")} -- backend/frontend may be out of sync`);
+  }
+}
+
+const UPLOAD_RESPONSE_KEYS = ["input_id", "images", "warnings", "errors"];
+const QUERY_RESPONSE_KEYS = ["query_id", "answer_text", "confidence", "confidence_bucket", "evidence_image_urls", "execution_trace"];
+
 export async function uploadImages(files: File[]): Promise<UploadResponse> {
   const formData = new FormData();
   for (const file of files) formData.append("files", file);
 
   const response = await fetch(`${API_BASE}/api/upload`, { method: "POST", body: formData });
   if (!response.ok) throw new Error(`Upload failed: ${await parseErrorDetail(response)}`);
-  return response.json();
+  const body = await response.json();
+  assertShape(body, UPLOAD_RESPONSE_KEYS, "Upload response");
+  return body;
 }
 
 export interface AreaBounds {
@@ -87,7 +106,9 @@ export async function captureArea(bounds: AreaBounds): Promise<UploadResponse> {
     body: JSON.stringify(bounds),
   });
   if (!response.ok) throw new Error(`Capture failed: ${await parseErrorDetail(response)}`);
-  return response.json();
+  const body = await response.json();
+  assertShape(body, UPLOAD_RESPONSE_KEYS, "Capture response");
+  return body;
 }
 
 export interface LocationIn {
@@ -106,7 +127,9 @@ export async function runQuery(
     body: JSON.stringify({ input_id: inputId, query_text: queryText, location: location ?? null }),
   });
   if (!response.ok) throw new Error(`Query failed: ${await parseErrorDetail(response)}`);
-  return response.json();
+  const body = await response.json();
+  assertShape(body, QUERY_RESPONSE_KEYS, "Query response");
+  return body;
 }
 
 export function evidenceImageUrl(path: string): string {
