@@ -100,19 +100,54 @@ decision (tool selection):
    images too, since it only checks each image's modality is *somewhere* in the allowed list, not
    that both required modalities are actually present. Added for `fusion_adapter.py`; every other
    tool leaves it unset (zero behavior change for them).
-4. **`orchestrator/controller.py`** (`handle_query(query_text, query_input, ...)`) — the actual
-   loop: validate → LLM tool selection → compatibility check (one retry on mismatch, then a
-   structured skip-with-warning, never a crash) → execute → `confidence.py` combines per-tool
-   scores → `execution_trace.py` builds the spec-required auditable summary (`selected_task`,
-   `tools_used` incl. `checkpoint_id`, `confidence`, `warnings`, `timestamp`) from what actually
-   ran, never from the LLM's own claims. Rejects only when there's neither an image nor a location
-   at all — otherwise even a location-only or image-only query is valid.
+4. **`orchestrator/controller.py`** (`handle_query(query_text, query_input, llm_provider, registry,
+   forced_tool_calls=None)`) — the actual loop, in two phases. **Resolution** (sequential): LLM
+   tool selection (or, if `forced_tool_calls` is given — the UI's manual "Advanced" picker bypasses
+   `select_tools()` entirely — exactly those calls) → compatibility check (one retry on mismatch,
+   then a structured skip-with-warning, never a crash) → compatible calls are queued, not run yet.
+   **Execution** (parallel): the queued calls run through a small bounded `ThreadPoolExecutor`
+   (`MAX_PARALLEL_TOOLS = 3`) instead of one at a time — safe because every adapter's lazy
+   model-singleton getter is already thread-safe (`app/concurrency.py`'s `serialize_first_call`,
+   which only locks the get-or-build step, not inference itself), and `ThreadPoolExecutor.map`
+   preserves input order regardless of which tool finishes first, so the trace/`tool_results` stay
+   deterministic. Then `confidence.py` combines per-tool scores → `execution_trace.py` builds the
+   spec-required auditable summary (`selected_task`, `tools_used` incl. `checkpoint_id`,
+   `confidence`, `warnings`, `timestamp`) from what actually ran, never from the LLM's own claims.
+   Rejects only when there's neither an image nor a location at all — otherwise even a
+   location-only or image-only query is valid. `QueryResult.tool_results: list[ToolResult]` carries
+   every executed tool's full `ToolResult` (not just the trace's lean audit fields) through to the
+   API layer — see the `ToolResultOut`/`tool_results` note below.
 5. **`specialists/`** — thin adapters (`grounding_adapter.py`, `water_segmentation_adapter.py`,
    `groundwater_adapter.py`) that expose a callable as a `ToolSpec`. Image-based adapters load the
    `models/*/` wrapper scripts via `_loader.py` (file-path import — `models/` isn't a Python
    package); the location-based `groundwater_adapter.py` calls into `gee/` instead. **Adding a new
    specialist = one adapter module + one line in `specialists/__init__.py`'s
-   `build_default_registry()` — no controller changes.**
+   `build_default_registry()` — no controller changes.** `specialists/__init__.py` also exposes a
+   `DEFAULT_REGISTRY` module-level singleton (built once, since registration is metadata-only) that
+   both `routes_query.py` and `routes_tools.py` import, instead of each constructing its own.
+
+**`ToolResultOut`/`tool_results` — surfacing what each specialist actually computed.** Every
+adapter already returns a `ToolResult` with rich `structured_data` (groundwater's 5-layer scores,
+wildfire's status/brightness/dates, grounding's per-detection boxes+scores, fusion's SAR-vs-optical
+agreement, etc.) — this used to be computed and then discarded before reaching the API response,
+which only ever carried a flattened `answer_text` string. `QueryResponse.tool_results:
+list[ToolResultOut]` (`schemas/models.py`) now threads it through end to end: each entry carries
+its own `tool_name`, `text_summary`, `structured_data`, `confidence`, `evidence_image_url`, and
+`source_image_url` (the *original* uploaded image, not the evidence render — needed because
+grounding's `bbox_xyxy` is in that original image's own pixel space; see `main.py`'s new `/uploads`
+static mount alongside the existing `/evidence` one). Building this in `routes_query.py` is
+additive alongside the existing flat `evidence_image_urls` — nothing was removed from the response
+shape, so nothing that read it before breaks.
+
+**`GET /api/tools`** (`api/routes_tools.py`) — registry metadata for all 7 specialists
+(`ToolSpecOut`: name/description/`parameters_schema`/image+location requirements/checkpoint id),
+served straight from `DEFAULT_REGISTRY.list_specs()`. Exists so the frontend's capabilities gallery
+and its manual tool-override picker both read from the live registry instead of a hand-maintained
+copy that could drift from what's actually registered.
+
+**Manual tool override** (`QueryRequest.forced_tools: Optional[list[ForcedToolCall]]`) — when set
+(even to `[]`), `handle_query` runs exactly those tools instead of asking the LLM to choose. `None`
+(the default) is today's fully-automatic behavior, unchanged.
 
 **Failure handling — two different layers, deliberately:**
 - A **specialist failing** (uninstalled dependency, gated model with no token, upstream API
@@ -141,15 +176,68 @@ query_id (`Content-Disposition: attachment`); a polished PDF/HTML export is futu
 
 ## Frontend (`frontend/src/`)
 
-**Chat-first layout** (redesigned 2026-09-14 from an earlier fixed-panel/full-bleed-map layout):
-`App.tsx` holds a `messages: ChatMsg[]` conversation log (`components/ChatMessage.tsx` — user
-query bubbles right-aligned, assistant bubbles left-aligned with a `pending`/`done`/`error` status
-each), a scrolling `.chat-main` column capped at 820px and centered, and a persistent bottom
-`.composer` bar (`components/QueryBox.tsx` — auto-growing textarea, Enter to send/Shift+Enter for
-a newline, example-prompt chips shown only while the conversation is empty). Submitting pushes a
-user message plus a `pending` assistant message immediately, then replaces the pending one by id
-once `runQuery` resolves or rejects — never a single overwritten "last result" the way the old
-layout worked.
+**Report-panel layout, not a chat log** (redesigned 2026-09-17 from an earlier left/right
+chat-bubble layout, itself redesigned 2026-09-14 from an even earlier fixed-panel/full-bleed-map
+one). The bubble layout read as a chatbot; the explicit design goal this round was for the UI to
+read as an analysis tool instead. `App.tsx` holds an `entries: QueryEntryState[]` log
+(`components/QueryEntry.tsx` — one entry per query, not two separate user/assistant messages: each
+carries its own `queryText` through `pending`/`done`/`error`, so an errored entry's Retry button
+never needs the caller to re-thread the original text). Each entry renders top-to-bottom as a
+full-width `.panel` — a small monospace `QUERY` label + the query text, then the result panel below
+it — never a left/right-aligned bubble. A scrolling `.chat-main` column stays capped at 820px and
+centered; a persistent bottom `.composer` bar (`components/QueryBox.tsx` — auto-growing textarea,
+Enter to send/Shift+Enter for a newline, `value`/`onChange` lifted up into `App.tsx` rather than
+owned locally, so a capabilities-gallery card click can populate it from outside) submits.
+
+**Every specialist's real output, not just a flattened string** — the reason this round of work
+happened at all: `ResultsView.tsx` renders one `components/ToolResultCard.tsx` per entry in
+`result.tool_results` (see the backend section's `ToolResultOut` note), dispatched by `tool_name`
+to a tool-specific renderer. Every card follows the same **headline + expandable detail** shape —
+a compact always-visible summary (a category badge, a status badge, a fraction meter) plus a
+"Show details" toggle (`framer-motion`'s `AnimatePresence`, animates height rather than an instant
+show/hide) revealing the full structured breakdown. Evidence imagery always shows outright, never
+behind the toggle — hiding it would undercut this app's whole evidence-grounded-answer premise.
+`text_guided_grounding`'s card is the one genuinely interactive renderer:
+`components/GroundingOverlay.tsx` draws each detection as an absolutely-positioned box over the
+*original* uploaded image (`result.source_image_url`, served by `main.py`'s `/uploads` mount),
+positioned as **percentages** of the image's own `naturalWidth`/`naturalHeight` (read via the
+`<img>`'s `onLoad`) rather than raw pixels — stays correctly aligned at any rendered display size
+with no resize listener needed, since `grounding_tool.py`'s `bbox_xyxy` is in that original image's
+absolute pixel space. `components/Lightbox.tsx` (`LightboxImage`) wraps every evidence/overlay
+image so clicking it opens an enlarged view. A tool-card renderer trusts the backend's
+`structured_data` shape by casting it to a small local interface per tool (same level of rigor
+`client.ts`'s `assertShape()` already applies at the wire boundary — no schema-validation
+dependency) — an unrecognized `tool_name` falls back to a plain key/value dump so a future
+specialist is never silently blank. One real bug worth remembering if extending a card: a GEE layer
+can come back `{raw: null, normalized: null}` when there's no coverage for a location (confirmed
+live for groundwater's `soil_moisture`) — `ToolResultCard.tsx`'s `Bar` renders "unavailable" for a
+null value instead of crashing on `.toFixed()`.
+
+**Manual tool control and discoverability** — both driven by `GET /api/tools`
+(`api/client.ts`'s `listTools()`), never a hand-maintained copy of what tools exist.
+`components/CapabilitiesGallery.tsx` is the homepage (shown in place of a bare empty state):
+a hero heading plus a card per registered tool, clicking one pre-fills the composer with that
+tool's example prompt (`toolMeta.ts`'s `EXAMPLE_PROMPT` — a small hand-maintained UI-copy map,
+*not* structural data, keyed by the same `ToolSpec.name` values as `CONFIDENCE_SEMANTICS` in
+`ResultsView.tsx`) and opens the attach popover or map drawer if that tool needs an image/location
+not yet provided. `components/AdvancedPanel.tsx` (opened via a second composer icon next to the
+paperclip) lets a user bypass automatic routing entirely: toggle on, pick one or more tools, and
+for each selected tool a parameter-entry form is *generated* directly from its live
+`parameters_schema` (a plain JSON Schema — the generic renderer handles the `string`/`integer`/
+`number`/`boolean` types every current schema actually uses, with a raw-JSON textarea fallback for
+anything else). Submitting sends `QueryRequest.forced_tools`; a small chip above the composer
+(`Manual: <tool names>`) shows when this override is active, with its own clear button back to
+automatic. `toolMeta.ts` also holds `TOOL_ICON` (an emoji per tool, used in the gallery and as a
+small badge next to each entry's query text) and `TOOL_LABEL` (a human-readable name, used by both
+the gallery and the Advanced panel's tool chips).
+
+**`framer-motion` is now a dependency** (`frontend/package.json` — the one new package this round;
+everything before it was deliberately dependency-free). Used narrowly, not "animate everything":
+entry entrance, the tool-card detail-toggle height animation, the capabilities gallery's staggered
+card entrance, and small button press/hover micro-interactions. Plain CSS `@keyframes` are still
+used for everything that predates this (`.bg-blobs` drift, the map drawer's slide transform, popover
+open/close, the pending-state pulse bar) — framer-motion was reached for only where CSS genuinely
+struggles (animating to an unknown "auto" height for the detail toggle).
 
 The map is **not** on-screen by default. A circular icon button (`.map-fab`, docked to the right
 edge — bottom-right on screens under 900px so it can't overlap the chip row, which happens at
@@ -196,18 +284,20 @@ up as an attached, immediately-queryable image with the location pin auto-set, s
 georeferenced upload. See `backend/app/gis/esri_capture.py` and the GEE-adjacent section below for
 the backend half (`/api/capture`).
 
-**Light glassmorphism theme** (also new this session, replacing the earlier dark slate-navy
-theme): translucent, blurred (`backdrop-filter`) panels — header, composer bar, message bubbles,
-the map drawer, popovers — layered over three large, slowly-drifting blurred color blobs
-(`.bg-blobs` in `App.css`, pure CSS `@keyframes`, no library) fixed behind everything, since glass
-panels need real color behind them to visibly "frost" against — a flat background defeats the
-effect. Design tokens live in `index.css`: the same four *semantic* accents as before (`--land`,
-`--water`, `--caution`, `--alert` — confidence buckets, warnings, water readouts) recalibrated
-darker/more saturated than the old dark-theme values so they still hold contrast on light glass,
-plus `--glass`/`--glass-strong`/`--glass-border`/`--glass-shadow` tokens for the frosted surfaces.
-`color-scheme: light`; there is no dark-mode toggle. Keep new UI on those tokens. No new
-dependency was added for any of this (icons in `components/icons.tsx` are hand-written inline
-SVG, animations are plain CSS) — `frontend/package.json` is unchanged.
+**Light glassmorphism theme**: translucent, blurred (`backdrop-filter`) panels — header, composer
+bar, entry/result panels, the map drawer, popovers — layered over three large, slowly-drifting
+blurred color blobs (`.bg-blobs` in `App.css`, pure CSS `@keyframes`, no library) fixed behind
+everything, since glass panels need real color behind them to visibly "frost" against — a flat
+background defeats the effect. Design tokens live in `index.css`: four *semantic* accents
+(`--land`, `--water`, `--caution`, `--alert` — confidence buckets, warnings, water readouts) tuned
+to hold contrast on light glass, plus `--glass`/`--glass-strong`/`--glass-border`/`--glass-shadow`
+for the frosted surfaces, plus a `--data` monospace token (JetBrains Mono, loaded in `index.html`)
+applied via a shared `.data-value` class to every technical/numeric value across the app —
+confidence scores, lat/lon, pixel coordinates, tool/checkpoint ids, timestamps — a deliberate part
+of reading as a technical tool rather than a conversational one. `color-scheme: light`; there is no
+dark-mode toggle. Keep new UI on those tokens; icons in `components/icons.tsx` stay hand-written
+inline SVG (no icon library). `frontend/package.json` has exactly one dependency beyond the
+original React/Leaflet stack — `framer-motion`, see above.
 
 ## Specialist models (`models/`)
 
