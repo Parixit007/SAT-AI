@@ -93,7 +93,11 @@ def extract_exif_gps(path: Path) -> Optional[GeoMetadata]:
 
 
 def extract_geo_metadata(path: Path, fmt: str) -> Optional[GeoMetadata]:
-    """Dispatches to the right extractor for the given (already-detected) image format."""
+    """Dispatches to the right extractor for the given (already-detected) image format. A TIFF
+    tries GeoTIFF extraction first, then falls back to EXIF GPS -- "TIFF" doesn't imply
+    "georeferenced": a plain TIFF with no embedded CRS/transform (e.g. a drone photo saved as
+    .tiff rather than .jpg) can still carry EXIF GPS tags the same way a JPEG would, and skipping
+    the fallback here used to silently drop that location entirely."""
     if fmt == "TIFF":
-        return extract_geotiff_metadata(path)
+        return extract_geotiff_metadata(path) or extract_exif_gps(path)
     return extract_exif_gps(path)

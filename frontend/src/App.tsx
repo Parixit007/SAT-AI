@@ -6,6 +6,7 @@ import { MapPinIcon, PaperclipIcon, XIcon } from "./components/icons";
 import { MapDrawer } from "./components/MapDrawer";
 import { QueryBox } from "./components/QueryBox";
 import { UploadPanel } from "./components/UploadPanel";
+import { errorMessage } from "./errorMessage";
 
 const QUERY_RADIUS_M = 1000;
 
@@ -37,7 +38,7 @@ function App() {
         m.map((msg) => (msg.id === pendingId ? { id: pendingId, role: "assistant", status: "done", result } : msg)),
       );
     } catch (err) {
-      const error = err instanceof Error ? err.message : String(err);
+      const error = errorMessage(err);
       setMessages((m) =>
         m.map((msg) => (msg.id === pendingId ? { id: pendingId, role: "assistant", status: "error", error } : msg)),
       );

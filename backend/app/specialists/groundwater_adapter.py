@@ -5,6 +5,7 @@ providers) until GEE is actually set up."""
 
 import logging
 import uuid
+from typing import Any
 
 from app.config import EVIDENCE_DIR
 from app.gee.groundwater import GroundwaterScore, assess_groundwater_potential, render_thumbnail_url
@@ -17,14 +18,12 @@ def _data_completeness_confidence(score: GroundwaterScore) -> float:
     """Not a statistical confidence -- this is a deterministic GIS score, not a probabilistic
     model prediction. "Confidence" here is data completeness (how many of the layers -- currently
     5 -- had data for this location), so the UI doesn't overstate certainty it doesn't have."""
-    total = len(score.layers)
-    if total == 0:
-        return 0.0
+    total = len(score.layers)  # always the 5 fixed keys compute_groundwater_score() populates
     available = total - len(score.missing_layers)
     return available / total
 
 
-def _handle(query_input: QueryInput, arguments: dict) -> ToolResult:
+def _handle(query_input: QueryInput, arguments: dict[str, Any]) -> ToolResult:
     import requests
 
     location = query_input.location

@@ -4,6 +4,7 @@ configured GEE service account (see .env.example) -- registering the tool is alw
 as the LLM providers and groundwater_potential) until GEE is actually set up."""
 
 import uuid
+from typing import Any
 
 from app.config import EVIDENCE_DIR
 from app.gee.wildfire import (
@@ -27,7 +28,7 @@ def _detection_confidence(assessment: WildfireAssessment) -> float:
     return min(1.0, assessment.max_confidence / 100.0)
 
 
-def _handle(query_input: QueryInput, arguments: dict) -> ToolResult:
+def _handle(query_input: QueryInput, arguments: dict[str, Any]) -> ToolResult:
     import requests
 
     location = query_input.location

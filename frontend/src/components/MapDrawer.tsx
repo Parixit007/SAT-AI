@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { captureArea, type LocationIn, type UploadResponse } from "../api/client";
+import { errorMessage } from "../errorMessage";
 import { XIcon } from "./icons";
 import { MapPicker } from "./MapPicker";
 
@@ -79,7 +80,7 @@ export function MapDrawer({ open, location, radiusM, onPick, onLocationChange, o
       setMode("pick");
       onClose();
     } catch (err) {
-      setCaptureError(err instanceof Error ? err.message : String(err));
+      setCaptureError(errorMessage(err));
     } finally {
       setCapturing(false);
     }

@@ -1,7 +1,5 @@
 """Gemini (google-genai) tool-calling adapter -- the default provider (see base.py / config.py)."""
 
-import json
-
 from app.config import settings
 from app.orchestrator.llm_providers.base import LLMProvider, ToolCall
 from app.orchestrator.tool_registry import ToolSpec

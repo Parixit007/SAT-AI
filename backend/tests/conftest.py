@@ -132,6 +132,42 @@ def exif_gps_jpeg(tmp_path: Path) -> Path:
     return path
 
 
+@pytest.fixture
+def exif_gps_tif(tmp_path: Path) -> Path:
+    """A plain TIFF (no embedded CRS/GeoTIFF transform) that still carries EXIF GPS tags -- e.g. a
+    drone photo saved as .tiff rather than .jpg. Same coordinates as exif_gps_jpeg, just format
+    swapped, to test extract_geo_metadata()'s TIFF-then-EXIF-fallback path specifically.
+
+    Built by round-tripping through a JPEG first: Pillow's TIFF writer errors
+    (`AttributeError: 'Exif' object has no attribute 'fp'`) when asked to serialize a freshly
+    constructed `Image.Exif()` with a nested GPS IFD directly -- it expects `Exif.fp` to exist,
+    which is only true for an Exif object attached to an already-opened file. Saving as JPEG first
+    (Pillow's Exif writer handles that case fine, per exif_gps_jpeg above), then reopening and
+    passing its already-serialized raw `exif` bytes into the TIFF save, sidesteps that code path
+    entirely. Verified by reading it back the same way extract_exif_gps() does
+    (`Image.open(...).getexif().get_ifd(0x8825)`) before trusting this as a fixture."""
+    from PIL.ExifTags import Base, GPS
+    from PIL.TiffImagePlugin import IFDRational
+
+    def rat(n, d=1):
+        return IFDRational(n, d)
+
+    jpeg_path = tmp_path / "_geo_no_crs_source.jpg"
+    path = tmp_path / "geo_no_crs.tif"
+    arr = np.random.default_rng(2).integers(0, 255, size=(50, 50, 3), dtype=np.uint8)
+    img = Image.fromarray(arr)
+    exif = Image.Exif()
+    exif[Base.GPSInfo.value] = {
+        GPS.GPSLatitudeRef: "S", GPS.GPSLatitude: (rat(33), rat(52), rat(4, 10)),
+        GPS.GPSLongitudeRef: "E", GPS.GPSLongitude: (rat(151), rat(12), rat(30, 10)),
+    }
+    img.save(jpeg_path, exif=exif)
+
+    reopened = Image.open(jpeg_path)
+    reopened.save(path, format="TIFF", exif=reopened.info.get("exif"))
+    return path
+
+
 class StubProvider(LLMProvider):
     """Returns a fixed, pre-scripted list of tool calls -- lets orchestrator tests assert routing
     behavior without spending real LLM API quota."""

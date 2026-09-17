@@ -40,6 +40,18 @@ def test_extract_geo_metadata_dispatches_by_format(georeferenced_tif, exif_gps_j
     assert extract_geo_metadata(plain_tif, "TIFF") is None
 
 
+def test_tiff_falls_back_to_exif_gps_when_not_georeferenced(exif_gps_tif):
+    """Regression test: a TIFF with no embedded CRS/transform (e.g. a drone photo saved as .tiff)
+    can still carry EXIF GPS tags the same way a JPEG would -- extract_geo_metadata() used to try
+    GeoTIFF extraction only for "TIFF" and never fall back, silently dropping this location."""
+    meta = extract_geo_metadata(exif_gps_tif, "TIFF")
+
+    assert meta is not None
+    assert meta.source == "exif"
+    assert -34 < meta.center_lat < -33
+    assert 151 < meta.center_lon < 152
+
+
 def test_missing_file_does_not_raise(tmp_path):
     missing = tmp_path / "does_not_exist.tif"
     assert extract_geotiff_metadata(missing) is None

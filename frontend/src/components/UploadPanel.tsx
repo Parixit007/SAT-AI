@@ -1,5 +1,6 @@
 import { useRef, useState } from "react";
 import { uploadImages, type UploadResponse } from "../api/client";
+import { errorMessage } from "../errorMessage";
 
 interface Props {
   onUploaded: (result: UploadResponse) => void;
@@ -25,7 +26,7 @@ export function UploadPanel({ onUploaded }: Props) {
       const result = await uploadImages(files);
       onUploaded(result);
     } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
+      setError(errorMessage(err));
     } finally {
       setUploading(false);
     }
