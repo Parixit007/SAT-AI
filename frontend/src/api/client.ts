@@ -46,13 +46,44 @@ export interface ExecutionTrace {
   timestamp: string;
 }
 
+export interface ToolResultOut {
+  tool_name: string;
+  text_summary: string;
+  structured_data: Record<string, unknown>;
+  confidence: number;
+  evidence_image_url: string | null;
+  source_image_url: string | null;
+}
+
 export interface QueryResponse {
   query_id: string;
   answer_text: string;
   confidence: number;
   confidence_bucket: "High" | "Medium" | "Low";
   evidence_image_urls: string[];
+  tool_results: ToolResultOut[];
   execution_trace: ExecutionTrace;
+}
+
+export interface ToolSpecOut {
+  name: string;
+  description: string;
+  parameters_schema: {
+    type: string;
+    properties: Record<string, { type: string; description?: string }>;
+    required?: string[];
+  };
+  min_images: number;
+  max_images: number;
+  compatible_modalities: string[];
+  uses_images: boolean;
+  requires_location: boolean;
+  checkpoint_id: string | null;
+}
+
+export interface ForcedToolCall {
+  tool_name: string;
+  arguments: Record<string, unknown>;
 }
 
 async function parseErrorDetail(response: Response): Promise<string> {
@@ -79,7 +110,15 @@ function assertShape(body: unknown, requiredKeys: string[], context: string): vo
 }
 
 const UPLOAD_RESPONSE_KEYS = ["input_id", "images", "warnings", "errors"];
-const QUERY_RESPONSE_KEYS = ["query_id", "answer_text", "confidence", "confidence_bucket", "evidence_image_urls", "execution_trace"];
+const QUERY_RESPONSE_KEYS = [
+  "query_id",
+  "answer_text",
+  "confidence",
+  "confidence_bucket",
+  "evidence_image_urls",
+  "tool_results",
+  "execution_trace",
+];
 
 export async function uploadImages(files: File[]): Promise<UploadResponse> {
   const formData = new FormData();
@@ -120,16 +159,30 @@ export async function runQuery(
   inputId: string | null,
   queryText: string,
   location?: LocationIn | null,
+  forcedTools?: ForcedToolCall[] | null,
 ): Promise<QueryResponse> {
   const response = await fetch(`${API_BASE}/api/query`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ input_id: inputId, query_text: queryText, location: location ?? null }),
+    body: JSON.stringify({
+      input_id: inputId,
+      query_text: queryText,
+      location: location ?? null,
+      forced_tools: forcedTools ?? null,
+    }),
   });
   if (!response.ok) throw new Error(`Query failed: ${await parseErrorDetail(response)}`);
   const body = await response.json();
   assertShape(body, QUERY_RESPONSE_KEYS, "Query response");
   return body;
+}
+
+// Live registry metadata for every specialist -- drives the homepage capabilities gallery and the
+// composer's manual "Advanced" tool picker from one source that can't drift from what actually runs.
+export async function listTools(): Promise<ToolSpecOut[]> {
+  const response = await fetch(`${API_BASE}/api/tools`);
+  if (!response.ok) throw new Error(`Failed to load tool list: ${await parseErrorDetail(response)}`);
+  return response.json();
 }
 
 export function evidenceImageUrl(path: string): string {

@@ -1,11 +1,14 @@
 import { useEffect, useRef, useState } from "react";
 import "./App.css";
-import { runQuery, type LocationIn, type UploadResponse } from "./api/client";
-import { ChatMessage, type ChatMsg } from "./components/ChatMessage";
-import { MapPinIcon, PaperclipIcon, XIcon } from "./components/icons";
+import { listTools, runQuery, type ForcedToolCall, type LocationIn, type ToolSpecOut, type UploadResponse } from "./api/client";
+import { AdvancedPanel } from "./components/AdvancedPanel";
+import { CapabilitiesGallery } from "./components/CapabilitiesGallery";
+import { MapPinIcon, PaperclipIcon, SlidersIcon, TrashIcon, XIcon } from "./components/icons";
 import { MapDrawer } from "./components/MapDrawer";
 import { QueryBox } from "./components/QueryBox";
+import { QueryEntry, type QueryEntryState } from "./components/QueryEntry";
 import { UploadPanel } from "./components/UploadPanel";
+import { EXAMPLE_PROMPT } from "./toolMeta";
 import { errorMessage } from "./errorMessage";
 
 const QUERY_RADIUS_M = 1000;
@@ -13,38 +16,52 @@ const QUERY_RADIUS_M = 1000;
 function App() {
   const [upload, setUpload] = useState<UploadResponse | null>(null);
   const [location, setLocation] = useState<LocationIn | null>(null);
-  const [messages, setMessages] = useState<ChatMsg[]>([]);
+  const [entries, setEntries] = useState<QueryEntryState[]>([]);
   const [submitting, setSubmitting] = useState(false);
   const [mapOpen, setMapOpen] = useState(false);
   const [attachOpen, setAttachOpen] = useState(false);
+  const [advancedOpen, setAdvancedOpen] = useState(false);
+  const [queryText, setQueryText] = useState("");
+  const [tools, setTools] = useState<ToolSpecOut[]>([]);
+  const [forcedTools, setForcedTools] = useState<ForcedToolCall[] | null>(null);
   const scrollBottomRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     scrollBottomRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
-  }, [messages.length]);
+  }, [entries.length]);
 
-  const handleQuery = async (queryText: string) => {
-    const userMsgId = crypto.randomUUID();
-    const pendingId = crypto.randomUUID();
-    setMessages((m) => [
-      ...m,
-      { id: userMsgId, role: "user", text: queryText },
-      { id: pendingId, role: "assistant", status: "pending" },
-    ]);
+  useEffect(() => {
+    // Drives the homepage gallery and the Advanced panel from one live source -- if this fails
+    // (backend not up yet), both simply render with no tools rather than crashing the app; the
+    // rest of the UI (upload, map, manual query text) still works.
+    listTools()
+      .then(setTools)
+      .catch(() => setTools([]));
+  }, []);
+
+  const hasUpload = !!upload && upload.images.length > 0;
+
+  const runOneQuery = async (text: string) => {
+    const id = crypto.randomUUID();
+    setEntries((e) => [...e, { id, queryText: text, status: "pending" }]);
     setSubmitting(true);
     try {
-      const result = await runQuery(upload?.input_id ?? null, queryText, location);
-      setMessages((m) =>
-        m.map((msg) => (msg.id === pendingId ? { id: pendingId, role: "assistant", status: "done", result } : msg)),
-      );
+      const result = await runQuery(upload?.input_id ?? null, text, location, forcedTools);
+      setEntries((e) => e.map((entry) => (entry.id === id ? { id, queryText: text, status: "done", result } : entry)));
     } catch (err) {
       const error = errorMessage(err);
-      setMessages((m) =>
-        m.map((msg) => (msg.id === pendingId ? { id: pendingId, role: "assistant", status: "error", error } : msg)),
-      );
+      setEntries((e) => e.map((entry) => (entry.id === id ? { id, queryText: text, status: "error", error } : entry)));
     } finally {
       setSubmitting(false);
     }
+  };
+
+  const handleSubmit = (text: string) => {
+    void runOneQuery(text);
+  };
+
+  const handleRetry = (text: string) => {
+    void runOneQuery(text);
   };
 
   const handleUploaded = (res: UploadResponse) => {
@@ -56,7 +73,11 @@ function App() {
     if (geo) setLocation({ lat: geo.center_lat, lon: geo.center_lon });
   };
 
-  const hasUpload = !!upload && upload.images.length > 0;
+  const handlePickCapability = (tool: ToolSpecOut) => {
+    setQueryText(EXAMPLE_PROMPT[tool.name] ?? tool.description);
+    if (tool.uses_images && !hasUpload) setAttachOpen(true);
+    else if (tool.requires_location && !location) setMapOpen(true);
+  };
 
   return (
     <div className="app-shell">
@@ -71,18 +92,19 @@ function App() {
           <h1>SatQuery AI</h1>
           <span className="brand-tag">Agentic analysis for remote-sensing imagery</span>
         </div>
+        {entries.length > 0 && (
+          <button className="btn btn-text header-clear" onClick={() => setEntries([])} title="Clear all entries">
+            <TrashIcon size={13} /> Clear
+          </button>
+        )}
       </header>
 
       <main className="chat-main">
         <div className="chat-scroll">
-          {messages.length === 0 ? (
-            <div className="empty-state">
-              <div className="empty-icon">🛰️</div>
-              <h2>Ask about any location or image</h2>
-              <p>Attach optical/SAR imagery with the clip icon, or open the map to drop a pin — then ask a question.</p>
-            </div>
+          {entries.length === 0 ? (
+            <CapabilitiesGallery tools={tools} onPick={handlePickCapability} />
           ) : (
-            messages.map((m) => <ChatMessage key={m.id} message={m} />)
+            entries.map((entry) => <QueryEntry key={entry.id} entry={entry} onRetry={handleRetry} />)
           )}
           <div ref={scrollBottomRef} />
         </div>
@@ -119,6 +141,17 @@ function App() {
             </span>
           </div>
         )}
+        {forcedTools !== null && (
+          <div className="location-chip-row">
+            <span className="location-chip advanced-active-chip">
+              <SlidersIcon size={13} />
+              Manual: {forcedTools.length === 0 ? "no tools picked" : forcedTools.map((t) => t.tool_name.replace(/_/g, " ")).join(", ")}
+              <button onClick={() => setForcedTools(null)} aria-label="Return to automatic tool selection">
+                <XIcon size={12} />
+              </button>
+            </span>
+          </div>
+        )}
 
         <div className="composer-bar">
           <div className="composer-attach">
@@ -140,12 +173,35 @@ function App() {
             )}
           </div>
 
+          <div className="composer-attach">
+            <button
+              className={`icon-btn attach-btn ${advancedOpen || forcedTools !== null ? "is-active" : ""}`}
+              onClick={() => setAdvancedOpen((v) => !v)}
+              aria-label="Advanced: manual tool selection"
+              aria-pressed={advancedOpen}
+              title="Advanced: manual tool selection"
+            >
+              <SlidersIcon />
+            </button>
+            {advancedOpen && (
+              <>
+                <div className="popover-backdrop" onClick={() => setAdvancedOpen(false)} />
+                <div className="attach-popover advanced-popover">
+                  <AdvancedPanel tools={tools} value={forcedTools} onChange={setForcedTools} />
+                </div>
+              </>
+            )}
+          </div>
+
           <QueryBox
+            value={queryText}
+            onChange={setQueryText}
+            tools={tools}
             hasUpload={hasUpload}
             hasLocation={location !== null}
             submitting={submitting}
-            showExamples={messages.length === 0}
-            onSubmit={handleQuery}
+            showExamples={entries.length === 0}
+            onSubmit={handleSubmit}
           />
         </div>
       </footer>

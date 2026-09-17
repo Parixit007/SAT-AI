@@ -133,140 +133,105 @@
   min-height: 100%;
 }
 
-.empty-state {
-  flex: 1;
+/* ============================== Entries (query -> result, report-style) ============================== */
+/* Reads top-to-bottom as a log/report entry, not a left/right chat exchange -- see the "tool, not
+   chatbot" amendment. entry-in's motion is driven by QueryEntry.tsx's own framer-motion values;
+   this just establishes the full-width panel shape both share. */
+
+.entry {
   display: flex;
   flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  text-align: center;
-  gap: 10px;
-  padding: 40px 20px;
-  color: var(--text-dim);
+  gap: 8px;
 }
 
-.empty-icon {
-  font-size: 40px;
-  margin-bottom: 6px;
-  animation: float-icon 4s ease-in-out infinite;
-}
-
-@keyframes float-icon {
-  0%,
-  100% {
-    transform: translateY(0);
-  }
-  50% {
-    transform: translateY(-8px);
-  }
-}
-
-.empty-state h2 {
-  font-size: 20px;
-  color: var(--text-bright);
-}
-
-.empty-state p {
-  max-width: 380px;
-  font-size: 14px;
-  line-height: 1.6;
-}
-
-/* ============================== Messages ============================== */
-
-.msg-row {
+.entry-query {
   display: flex;
-  animation: bubble-in 320ms cubic-bezier(0.2, 0.8, 0.2, 1);
+  align-items: baseline;
+  gap: 10px;
+  padding: 0 4px;
 }
 
-.msg-row.user {
-  justify-content: flex-end;
+.entry-query-label {
+  flex-shrink: 0;
+  font-family: var(--data);
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--text-dim);
+  border-left: 2px solid var(--water);
+  padding-left: 8px;
 }
 
-.msg-row.assistant {
-  justify-content: flex-start;
-}
-
-@keyframes bubble-in {
-  from {
-    opacity: 0;
-    transform: translateY(10px) scale(0.98);
-  }
-  to {
-    opacity: 1;
-    transform: translateY(0) scale(1);
-  }
-}
-
-.msg-bubble {
-  max-width: 80%;
-  padding: 13px 17px;
-  border-radius: 18px;
+.entry-query-text {
   font-size: 14px;
-  line-height: 1.6;
-  box-shadow: var(--glass-shadow);
-  border: 1px solid var(--glass-border);
-}
-
-.msg-bubble.user {
-  background: linear-gradient(135deg, rgba(47, 127, 196, 0.22), rgba(47, 127, 196, 0.1));
-  border-color: rgba(47, 127, 196, 0.28);
   color: var(--text-bright);
-  border-bottom-right-radius: 5px;
+  font-weight: 500;
 }
 
-.msg-bubble.assistant {
+.entry-tool-icon {
+  margin-left: auto;
+  font-size: 15px;
+  opacity: 0.85;
+}
+
+.panel {
   background: var(--glass-strong);
   backdrop-filter: blur(18px) saturate(160%);
   -webkit-backdrop-filter: blur(18px) saturate(160%);
-  border-bottom-left-radius: 5px;
-  min-width: 120px;
+  border: 1px solid var(--glass-border);
+  border-radius: 12px;
+  box-shadow: var(--glass-shadow);
+  padding: 16px 18px;
 }
 
-.msg-bubble.assistant.error {
-  background: linear-gradient(135deg, rgba(207, 68, 51, 0.14), rgba(207, 68, 51, 0.06));
-  border-color: rgba(207, 68, 51, 0.3);
+.entry-pending {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 13px;
+  color: var(--text-dim);
+}
+
+.pulse-bar {
+  position: relative;
+  display: block;
+  width: 44px;
+  height: 4px;
+  border-radius: 999px;
+  background: var(--water-dim);
+  overflow: hidden;
+}
+
+.pulse-bar span {
+  position: absolute;
+  inset: 0;
+  width: 40%;
+  border-radius: 999px;
+  background: var(--water);
+  animation: pulse-sweep 1.1s ease-in-out infinite;
+}
+
+@keyframes pulse-sweep {
+  0% {
+    transform: translateX(-100%);
+  }
+  100% {
+    transform: translateX(250%);
+  }
+}
+
+.entry-error {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  font-size: 13px;
   color: var(--alert);
 }
 
-.msg-bubble.result-bubble {
-  max-width: 100%;
-}
-
-.typing-dots {
-  display: inline-flex;
-  gap: 4px;
-  padding: 4px 2px;
-}
-
-.typing-dots span {
-  width: 7px;
-  height: 7px;
-  border-radius: 50%;
-  background: var(--water);
-  opacity: 0.5;
-  animation: typing-bounce 1.1s ease-in-out infinite;
-}
-
-.typing-dots span:nth-child(2) {
-  animation-delay: 0.15s;
-}
-
-.typing-dots span:nth-child(3) {
-  animation-delay: 0.3s;
-}
-
-@keyframes typing-bounce {
-  0%,
-  60%,
-  100% {
-    transform: translateY(0);
-    opacity: 0.5;
-  }
-  30% {
-    transform: translateY(-5px);
-    opacity: 1;
-  }
+.retry-btn {
+  flex-shrink: 0;
+  color: var(--alert);
 }
 
 /* ============================== Composer ============================== */
@@ -967,6 +932,10 @@ button:disabled {
 /* ============================== Result ============================== */
 
 .result-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
   margin-bottom: 10px;
 }
 
@@ -1165,4 +1134,535 @@ button:disabled {
 
 .download-link:hover {
   border-bottom-color: var(--water);
+}
+
+/* ============================== Shared button system ============================== */
+/* .btn extends the existing bare `button` base (form controls, .chip, .icon-btn) rather than
+   replacing it -- every new interactive element added by the UI overhaul (retry/copy/clear,
+   detail toggles, advanced-panel chips, lightbox close, gallery cards) draws from this one place
+   so they read as one language instead of ad hoc. */
+
+.btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12.5px;
+  font-weight: 500;
+}
+
+.btn-text {
+  border: none;
+  background: transparent;
+  padding: 4px 6px;
+  color: var(--text-dim);
+}
+
+.btn-text:hover:not(:disabled) {
+  color: var(--water);
+  border-color: transparent;
+}
+
+.btn-icon {
+  width: 30px;
+  height: 30px;
+  padding: 0;
+  justify-content: center;
+  border-radius: 50%;
+  border: 1px solid var(--glass-border);
+  background: var(--glass);
+  color: var(--text-dim);
+}
+
+.btn-icon:hover:not(:disabled) {
+  color: var(--water);
+  background: var(--water-dim);
+  transform: scale(1.06);
+}
+
+.btn-icon:active:not(:disabled) {
+  transform: scale(0.94);
+}
+
+.header-clear {
+  margin-left: auto;
+}
+
+/* ============================== Monospace data values ============================== */
+
+.data-value {
+  font-family: var(--data);
+}
+
+/* ============================== Tool result cards ============================== */
+
+.tool-card-row {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-bottom: 12px;
+}
+
+.tool-card {
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  overflow: hidden;
+  background: rgba(255, 255, 255, 0.4);
+}
+
+.tool-card-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 9px 14px;
+  background: rgba(255, 255, 255, 0.5);
+  border-bottom: 1px solid var(--border);
+}
+
+.tool-card-name {
+  font-family: var(--display);
+  font-size: 12.5px;
+  font-weight: 500;
+  color: var(--text-bright);
+}
+
+.tool-card-confidence {
+  font-size: 11px;
+  color: var(--text-dim);
+}
+
+.tool-card-body {
+  padding: 12px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.tool-card-note {
+  font-size: 13px;
+  color: var(--text-dim);
+}
+
+.tool-card-evidence {
+  max-width: 260px;
+}
+
+.tool-detail-toggle {
+  align-self: flex-start;
+  font-size: 11.5px;
+}
+
+.chevron {
+  transition: transform 160ms ease;
+}
+
+.chevron.chevron-open {
+  transform: rotate(180deg);
+}
+
+.tool-detail-body {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding-top: 8px;
+}
+
+.stat-bar {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.stat-bar-head {
+  display: flex;
+  justify-content: space-between;
+  font-size: 12px;
+  color: var(--text);
+  text-transform: capitalize;
+}
+
+.stat-bar-track {
+  height: 6px;
+  border-radius: 999px;
+  background: var(--border);
+  overflow: hidden;
+}
+
+.stat-bar-fill {
+  height: 100%;
+  border-radius: 999px;
+  background: var(--water);
+  transition: width 320ms cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+
+.kv-grid {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 4px 10px;
+  margin: 0;
+  font-size: 12px;
+}
+
+.kv-grid dt {
+  color: var(--text-dim);
+  text-transform: capitalize;
+}
+
+.kv-grid dd {
+  margin: 0;
+  color: var(--text);
+}
+
+.detection-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  font-size: 12px;
+}
+
+.detection-list li {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.vqa-question {
+  font-size: 13px;
+  font-style: italic;
+  color: var(--text-dim);
+}
+
+.vqa-answer {
+  font-size: 15px;
+  font-weight: 500;
+  color: var(--text-bright);
+}
+
+/* Badge variants share one shape; only the category->color mapping differs. color-mix() blends
+   stay derived from the existing 4-token palette (land/water/caution/alert) instead of introducing
+   new hardcoded hex values for the extra groundwater/fire steps. */
+.gw-badge,
+.fire-badge,
+.agree-badge {
+  display: inline-flex;
+  align-self: flex-start;
+  font-size: 11px;
+  font-weight: 600;
+  padding: 5px 11px;
+  border-radius: 999px;
+  border: 1px solid;
+}
+
+.gw-very-low {
+  color: var(--alert);
+  border-color: var(--alert);
+  background: var(--alert-dim);
+}
+.gw-low {
+  color: color-mix(in srgb, var(--alert) 55%, var(--caution) 45%);
+  border-color: color-mix(in srgb, var(--alert) 55%, var(--caution) 45%);
+  background: color-mix(in srgb, var(--alert-dim) 55%, var(--caution-dim) 45%);
+}
+.gw-moderate {
+  color: var(--caution);
+  border-color: var(--caution);
+  background: var(--caution-dim);
+}
+.gw-high {
+  color: color-mix(in srgb, var(--caution) 40%, var(--land) 60%);
+  border-color: color-mix(in srgb, var(--caution) 40%, var(--land) 60%);
+  background: color-mix(in srgb, var(--caution-dim) 40%, var(--land-dim) 60%);
+}
+.gw-very-high {
+  color: var(--land);
+  border-color: var(--land);
+  background: var(--land-dim);
+}
+
+.fire-none {
+  color: var(--land);
+  border-color: var(--land);
+  background: var(--land-dim);
+}
+.fire-possible {
+  color: var(--caution);
+  border-color: var(--caution);
+  background: var(--caution-dim);
+}
+.fire-active {
+  color: var(--alert);
+  border-color: var(--alert);
+  background: var(--alert-dim);
+}
+
+.agree-badge.agree {
+  color: var(--land);
+  border-color: var(--land);
+  background: var(--land-dim);
+}
+.agree-badge.disagree {
+  color: var(--caution);
+  border-color: var(--caution);
+  background: var(--caution-dim);
+}
+
+/* ============================== Grounding overlay ============================== */
+
+.grounding-overlay {
+  position: relative;
+  display: inline-block;
+  max-width: 100%;
+  border-radius: 10px;
+  overflow: hidden;
+  border: 1px solid var(--border);
+}
+
+.grounding-overlay-image {
+  display: block;
+  max-width: 100%;
+  max-height: 420px;
+}
+
+.grounding-box {
+  position: absolute;
+  border: 2px solid;
+  border-radius: 3px;
+  pointer-events: none;
+}
+
+.grounding-box-label {
+  position: absolute;
+  top: -1px;
+  left: -2px;
+  transform: translateY(-100%);
+  font-family: var(--data);
+  font-size: 10px;
+  color: #fff;
+  padding: 2px 6px;
+  border-radius: 4px 4px 4px 0;
+  white-space: nowrap;
+}
+
+.grounding-box-score {
+  opacity: 0.85;
+}
+
+/* ============================== Lightbox ============================== */
+
+.lightbox-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(14, 20, 36, 0.72);
+  backdrop-filter: blur(4px);
+  padding: 32px;
+}
+
+.lightbox-image {
+  max-width: 100%;
+  max-height: 100%;
+  border-radius: 10px;
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.4);
+}
+
+.lightbox-close {
+  position: fixed;
+  top: 20px;
+  right: 20px;
+  background: rgba(255, 255, 255, 0.16);
+  border-color: rgba(255, 255, 255, 0.3);
+  color: #fff;
+}
+
+.lightbox-close:hover {
+  background: rgba(255, 255, 255, 0.28);
+  color: #fff;
+}
+
+.evidence-image,
+.tool-card-evidence {
+  cursor: zoom-in;
+}
+
+/* ============================== Homepage / capabilities gallery ============================== */
+
+.homepage {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 28px;
+  padding: 36px 4px 20px;
+}
+
+.homepage-hero {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  max-width: 560px;
+}
+
+.homepage-eyebrow {
+  font-family: var(--data);
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  color: var(--water);
+}
+
+.homepage-hero h1 {
+  font-size: 30px;
+  letter-spacing: -0.01em;
+}
+
+.homepage-hero p {
+  font-size: 14px;
+  line-height: 1.6;
+  color: var(--text-dim);
+}
+
+.capability-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  gap: 12px;
+}
+
+.capability-card {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 6px;
+  text-align: left;
+  padding: 16px;
+  border-radius: 14px;
+  background: var(--glass);
+  backdrop-filter: blur(16px) saturate(160%);
+  -webkit-backdrop-filter: blur(16px) saturate(160%);
+  border: 1px solid var(--glass-border);
+  box-shadow: var(--glass-shadow);
+  cursor: pointer;
+}
+
+.capability-card:hover {
+  border-color: rgba(47, 127, 196, 0.4);
+  background: var(--water-dim);
+}
+
+.capability-icon {
+  font-size: 22px;
+}
+
+.capability-name {
+  font-family: var(--display);
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text-bright);
+}
+
+.capability-desc {
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--text-dim);
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.capability-prompt {
+  margin-top: auto;
+  padding-top: 8px;
+  font-size: 11px;
+  color: var(--water);
+}
+
+/* ============================== Advanced (manual tool override) panel ============================== */
+
+.advanced-popover {
+  /* This is the SECOND composer icon button (after the paperclip), so it starts further right
+     than .attach-popover's own anchor -- cap width against remaining viewport space (not just a
+     vw fraction) so it can't overflow regardless of exactly where that button lands. */
+  width: 340px;
+  max-width: calc(100vw - 48px);
+  max-height: 60vh;
+  overflow-y: auto;
+}
+
+.advanced-toggle {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12.5px;
+  color: var(--text);
+  cursor: pointer;
+}
+
+.advanced-tool-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.advanced-tool {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.advanced-tool-chip {
+  align-self: flex-start;
+}
+
+.advanced-tool.is-selected .advanced-tool-chip {
+  border-color: var(--water);
+  color: var(--water);
+  background: var(--water-dim);
+}
+
+.advanced-tool-params {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px 10px;
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.5);
+}
+
+.param-field {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  font-size: 11px;
+  color: var(--text-dim);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.param-field input,
+.param-field textarea {
+  text-transform: none;
+  letter-spacing: 0;
+  font-family: var(--data);
+  font-size: 12.5px;
+}
+
+.param-field-checkbox {
+  flex-direction: row;
+  align-items: center;
+  gap: 6px;
+  text-transform: none;
+}
+
+.advanced-hint {
+  font-size: 12px;
+  color: var(--caution);
+}
+
+.advanced-active-chip {
+  color: var(--water);
 }

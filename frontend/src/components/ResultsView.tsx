@@ -1,5 +1,8 @@
-import { evidenceImageUrl, reportUrl, type QueryResponse } from "../api/client";
+import { useState } from "react";
+import { reportUrl, type QueryResponse } from "../api/client";
+import { CheckIcon, CopyIcon } from "./icons";
 import { ExecutionTraceView } from "./ExecutionTraceView";
+import { ToolResultCard } from "./ToolResultCard";
 
 const BUCKET_CLASS: Record<string, string> = {
   High: "badge-high",
@@ -32,6 +35,27 @@ function confidenceTitle(result: QueryResponse): string | undefined {
   return toolName ? CONFIDENCE_SEMANTICS[toolName] : undefined;
 }
 
+function CopyAnswerButton({ text }: { text: string }) {
+  const [copied, setCopied] = useState(false);
+
+  const copy = async () => {
+    try {
+      await navigator.clipboard.writeText(text);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1500);
+    } catch {
+      // Clipboard access can be denied by the browser -- nothing useful to recover into, the
+      // button simply doesn't confirm and the user can select-and-copy the text manually.
+    }
+  };
+
+  return (
+    <button className="btn btn-icon copy-btn" onClick={copy} title="Copy answer" aria-label="Copy answer">
+      {copied ? <CheckIcon size={14} /> : <CopyIcon size={14} />}
+    </button>
+  );
+}
+
 export function ResultsView({ result }: { result: QueryResponse }) {
   const semantics = confidenceTitle(result);
   return (
@@ -42,14 +66,15 @@ export function ResultsView({ result }: { result: QueryResponse }) {
           <span className="badge-value">{result.confidence.toFixed(2)}</span>
           {semantics && <span className="badge-info" aria-hidden="true">ⓘ</span>}
         </span>
+        <CopyAnswerButton text={result.answer_text} />
       </div>
 
       <p className="answer-text">{result.answer_text}</p>
 
-      {result.evidence_image_urls.length > 0 && (
-        <div className="evidence-row">
-          {result.evidence_image_urls.map((url) => (
-            <img key={url} src={evidenceImageUrl(url)} alt="Visual evidence" className="evidence-image" />
+      {result.tool_results.length > 0 && (
+        <div className="tool-card-row">
+          {result.tool_results.map((tr, i) => (
+            <ToolResultCard key={`${tr.tool_name}-${i}`} result={tr} />
           ))}
         </div>
       )}
