@@ -49,10 +49,21 @@ class CaptureRequest(BaseModel):
     max_lon: float
 
 
+class ForcedToolCall(BaseModel):
+    """One entry in QueryRequest.forced_tools -- lets a caller (the UI's manual 'Advanced' picker)
+    pick exactly which tool(s) run, bypassing the LLM's own selection for that query."""
+
+    tool_name: str
+    arguments: dict[str, Any] = {}
+
+
 class QueryRequest(BaseModel):
     input_id: Optional[str] = None  # omit for a location-only query (no uploaded image needed)
     query_text: str
     location: Optional[LocationIn] = None  # falls back to an uploaded image's own geo metadata if omitted
+    # None (default) = automatic LLM tool selection, unchanged. A non-None list bypasses
+    # select_tools() entirely and runs exactly these tools -- see orchestrator/controller.py.
+    forced_tools: Optional[list[ForcedToolCall]] = None
 
 
 class ToolUsage(BaseModel):
@@ -71,10 +82,42 @@ class ExecutionTraceOut(BaseModel):
     timestamp: str
 
 
+class ToolResultOut(BaseModel):
+    """One specialist's full output -- the rich, tool-specific structured_data every adapter
+    already computes (backend/app/specialists/*_adapter.py) but that used to be discarded before
+    reaching the API response. Additive alongside the existing flat answer_text/evidence_image_urls
+    fields on QueryResponse, not a replacement for them."""
+
+    tool_name: str
+    text_summary: str
+    structured_data: dict[str, Any]
+    confidence: float
+    evidence_image_url: Optional[str] = None
+    source_image_url: Optional[str] = None  # the original uploaded image this result is about, if any
+
+
 class QueryResponse(BaseModel):
     query_id: str
     answer_text: str
     confidence: float
     confidence_bucket: str
     evidence_image_urls: list[str]
+    tool_results: list[ToolResultOut] = []
     execution_trace: ExecutionTraceOut
+
+
+class ToolSpecOut(BaseModel):
+    """Registry metadata for one specialist, as served by GET /api/tools -- mirrors ToolSpec
+    (orchestrator/tool_registry.py) minus its non-serializable `handler`. Drives both the
+    frontend's capabilities gallery and its manual tool-override picker from one live source, so
+    neither can drift from what the backend actually runs."""
+
+    name: str
+    description: str
+    parameters_schema: dict[str, Any]
+    min_images: int
+    max_images: int
+    compatible_modalities: list[str]
+    uses_images: bool
+    requires_location: bool
+    checkpoint_id: Optional[str] = None

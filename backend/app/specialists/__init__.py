@@ -22,3 +22,9 @@ def build_default_registry() -> ToolRegistry:
     registry.register(FUSION_TOOL_SPEC)
     registry.register(WILDFIRE_TOOL_SPEC)
     return registry
+
+
+# Built once per process and shared by every route module that needs it (routes_query.py,
+# routes_tools.py) -- registering a tool is cheap/metadata-only (see this module's own docstring),
+# but there's no reason to construct a second, separate instance per module.
+DEFAULT_REGISTRY = build_default_registry()

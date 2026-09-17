@@ -281,3 +281,62 @@ def test_input_summary_includes_location_when_present():
     )
 
     assert "12.9" in result.trace.input_summary and "77.6" in result.trace.input_summary
+
+
+# --- manual tool override + parallel execution (see the UI-overhaul plan) ----------------------
+
+
+def test_forced_tool_calls_bypasses_llm_selection(sample_image):
+    """QueryRequest.forced_tools (the UI's manual 'Advanced' picker) must run exactly what's
+    forced, never consulting the LLM provider at all -- proven with a provider scripted to select
+    a *different* tool than what's forced; if the bypass didn't work, that tool would run instead."""
+    registry = build_default_registry()
+    provider = StubProvider([ToolCall(tool_name="text_guided_grounding", arguments={"query": "ship"})])
+    forced = [ToolCall(tool_name="water_body_segmentation", arguments={})]
+
+    result = handle_query(
+        "irrelevant query text", QueryInput(images=[sample_image]), provider, registry, forced_tool_calls=forced
+    )
+
+    assert result.trace.selected_task == "water_body_segmentation"
+    assert [t["name"] for t in result.trace.tools_used] == ["water_body_segmentation"]
+
+
+def test_multiple_independent_tools_all_execute_and_preserve_call_order(sample_image):
+    """Two independent tools selected together must both execute (not just the first, the way the
+    old sequential loop that this replaces would still have done) and land in tool_results/the
+    trace in the *original call order*, regardless of which finishes first -- the tool registered
+    to finish slower is listed first in the call list, so an implementation that reordered by
+    completion time (rather than ThreadPoolExecutor.map's documented input-order guarantee) would
+    fail this."""
+    import time
+
+    calls_started = []
+
+    def make_handler(name: str, delay: float):
+        def handler(query_input: QueryInput, arguments: dict) -> ToolResult:
+            calls_started.append(name)
+            time.sleep(delay)
+            return ToolResult(
+                tool_name=name, text_summary=f"{name} done.", structured_data={},
+                evidence_image_path=None, confidence=0.5,
+            )
+        return handler
+
+    def make_spec(name: str, delay: float) -> ToolSpec:
+        return ToolSpec(
+            name=name, description="", parameters_schema={"type": "object", "properties": {}},
+            min_images=1, max_images=1, compatible_modalities=["optical", "sar", "unknown"],
+            handler=make_handler(name, delay),
+        )
+
+    registry = ToolRegistry()
+    registry.register(make_spec("slow_tool", 0.15))
+    registry.register(make_spec("fast_tool", 0.0))
+    provider = StubProvider([ToolCall(tool_name="slow_tool", arguments={}), ToolCall(tool_name="fast_tool", arguments={})])
+
+    result = handle_query("run both", QueryInput(images=[sample_image]), provider, registry)
+
+    assert set(calls_started) == {"slow_tool", "fast_tool"}  # both actually ran
+    assert [r.tool_name for r in result.tool_results] == ["slow_tool", "fast_tool"]
+    assert [t["name"] for t in result.trace.tools_used] == ["slow_tool", "fast_tool"]
