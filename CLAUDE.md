@@ -306,6 +306,41 @@ original React/Leaflet stack — `framer-motion`, see above.
   `git clone longzw1997/Open-GroundingDino`) is **not installed** in this env yet — registering the
   tool always works (metadata-only), but running it will raise until that setup step is done; see
   the docstring at the top of that file. Device auto-selects `mps`/`cpu`.
+  **Checkpoint swapped to v3, 2026-09-18** (`models/grounding/checkpoints/dior_rsvg_finetuned.pth`
+  — the file itself is gitignored like every checkpoint, so this is a local-state change, not a git
+  diff): `kaggle_eval_grounding_dino_v3.ipynb`'s real 3-way eval (1000-item DIOR-RSVG test subset)
+  gave zero-shot 0.202/0.139/0.233, the old v1 checkpoint 0.793/0.739/0.714, and v3 (trained on
+  DIOR-RSVG + VRSBench + DOTA, from the already-fixed no-leakage data pipeline) **0.827/0.770/0.746**
+  (Acc@0.5/Acc@0.7/mIoU) — v3 wins on all three, so it replaced v1. The old checkpoint is kept
+  alongside it as `dior_rsvg_finetuned.v1_backup.pth` (also gitignored) rather than deleted, in case
+  a future comparison ever needs it — both are ~1.1GB, worth deleting the backup in a future disk
+  cleanup once v3's real-world behavior is confirmed solid. Getting a real number out of this run
+  took five actual bugs, found and fixed live by cloning the real repo and reading tracebacks
+  directly rather than guessing — worth knowing before assuming a Grounding DINO eval notebook
+  "should just work" against the current upstream repo:
+  1. `groundingdino.util.inference` (and the repo's own `tools/inference_on_a_image.py`) import
+     paths that moved when the repo restructured — already covered above.
+  2. `models/__init__.py`'s own `build_model(args)` calls a bare, undefined `build(args)` instead of
+     the `build_groundingdino` it actually imports — a genuine bug in the upstream repo itself, not
+     this project's usage of it. Fix: import `build_groundingdino` directly instead of going through
+     that broken wrapper.
+  3. The eval notebook loaded `tools/GroundingDINO_SwinT_OGC.py` (a lightweight inference-only
+     config) instead of `config/cfg_odvg.py` (the real training config) — the former is missing
+     fields (`aux_loss`, `dn_labelbook_size`, etc.) that `build_groundingdino` requires.
+  4. `cfg_odvg.py` defaults to `use_coco_eval=True`, which makes `build_groundingdino`'s internal
+     `PostProcess` try to load a real COCO annotation file via `args.coco_val_path` — a field
+     `main.py` only ever sets dynamically at training time, never a static config field. Set
+     `use_coco_eval=False` (with a placeholder `label_list`, since that's the only other field its
+     else-branch needs) before building — this notebook's own eval logic never touches
+     `postprocessors` at all, so the placeholder is harmless.
+  5. `build_groundingdino` returns `(model, criterion, postprocessors)`, a 3-tuple — `model =
+     build_model(args)` was silently binding `model` to the whole tuple instead of raising.
+  All five fixes landed in both `kaggle_eval_grounding_dino_v3.ipynb` and the identical pattern in
+  `kaggle_finetune_grounding_dino_v3_dota.ipynb`'s own (never-critical-path, training already
+  succeeded) Section 9 eval cell. Separately, the very first eval attempt also hit Google Drive
+  rate-limiting DIOR-RSVG's `gdown` download ("Too many users have viewed or downloaded this file
+  recently") after repeated same-day reruns — not a code bug, just don't re-run this notebook
+  back-to-back too many times in one session.
 - **`water_segmentation/water_segmentation_tool.py`** (`WaterSegmentationTool`) — `smp.Unet`
   (resnet34, 256×256). `segment(image_path) -> {"mask", "water_fraction", "confidence"}`. Fully
   installed and working. **Retrained 2026-09-14** via `notebooks/kaggle_finetune_water_unet.ipynb`
@@ -537,12 +572,15 @@ Settings), checkpoints downloaded from the Output tab afterward.
 - **`kaggle_eval_grounding_dino_v3.ipynb`** — eval-only companion to v3, added because re-pushing
   the *whole* v3 notebook to pick up the Section 9 fix would re-train from scratch (another 10+
   hours, more than this account's remaining weekly GPU budget could afford after the first run).
-  Skips training entirely: loads the already-trained v3 checkpoint (uploaded as a Kaggle input
-  dataset the same way the "current" checkpoint always has been — `kaggle kernels push`'s
-  `kernel_sources` field, which in principle mounts another kernel's own output directly, was tried
-  first and rejected by the API as an invalid source; the manual download-then-upload path is the
-  one that's actually proven to work in this project) and runs the same fixed Acc@0.5/Acc@0.7/mIoU
-  protocol three ways (zero-shot / current v1 checkpoint / new v3 checkpoint).
+  Skips training entirely: loads the already-trained v3 checkpoint, uploaded as its own Kaggle
+  dataset (`dior-rsvg-finetuned-v3`, same manual download-then-upload pattern as `dior-rsvg-
+  finetuned-v1` — a `kernel_sources` reference to the training kernel's own output was tried first
+  and rejected by the API as an invalid source), and runs the same fixed Acc@0.5/Acc@0.7/mIoU
+  protocol three ways (zero-shot / current v1 checkpoint / new v3 checkpoint). **Actually run
+  successfully 2026-09-18**, after five real bugs found and fixed live (see the `grounding_tool.py`
+  entry above in Specialist models for the full list) plus one unrelated Google Drive rate-limit
+  that just needed a retry after some time passed — v3 won on all three metrics and replaced v1 as
+  the live checkpoint.
 - **`kaggle_finetune_water_unet.ipynb`** — trains water-body segmentation from scratch (no prior
   notebook existed for this checkpoint) on the public "Satellite Images of Water Bodies" dataset
   (Kaggle, `franciscoescobar/satellite-images-of-water-bodies`, CC BY-NC-SA 4.0, 2841 image/mask
