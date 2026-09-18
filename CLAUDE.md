@@ -110,6 +110,12 @@ decision (tool selection):
    tool selection (or, if `forced_tool_calls` is given — the UI's manual "Advanced" picker bypasses
    `select_tools()` entirely — exactly those calls) → compatibility check (one retry on mismatch,
    then a structured skip-with-warning, never a crash) → compatible calls are queued, not run yet.
+   An **empty first selection also gets one retry** (LLM-selection path only, not
+   `forced_tool_calls=[]` — that's a deliberate "run nothing" request from the Advanced picker, not
+   a failure): tool-calling is probabilistic, confirmed live — "will it burn, past 1000 days"
+   against the real Groq-backed orchestrator declined to call anything once, then routed correctly
+   to `wildfire_detection` on an identical retry, so a second independent sample is a cheap, real
+   fix for a borderline-phrased query rather than a permanently dead end.
    **Execution** (parallel): the queued calls run through a small bounded `ThreadPoolExecutor`
    (`MAX_PARALLEL_TOOLS = 3`) instead of one at a time — safe because every adapter's lazy
    model-singleton getter is already thread-safe (`app/concurrency.py`'s `serialize_first_call`,
