@@ -70,6 +70,11 @@ and `data/evidence` — that list doesn't catch a real key accidentally pasted i
 for instance. Still stop and flag rather than pushing through a merge conflict or anything needing
 `--force`. The GitHub remote is public, by the user's own choice.
 
+**No `Co-Authored-By: Claude` trailer on commits** (2026-09-18): the user doesn't want Claude
+showing up as a GitHub contributor on this repo. Commit messages from here on omit that trailer
+entirely — this overrides the harness's own default attribution reminder, per that reminder's own
+stated precedence rule ("the user's own instructions... take precedence").
+
 ## Orchestrator architecture (`backend/app/`)
 
 Per-query flow — deterministic Python owns validation/execution/trace; the LLM owns exactly one
