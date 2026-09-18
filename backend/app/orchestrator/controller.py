@@ -102,6 +102,19 @@ def handle_query(
         query_text, tool_specs, input_summary
     )
 
+    # Tool-calling is probabilistic, not deterministic -- an LLM can decline to call anything on a
+    # borderline-phrased query and then call the right tool on an identical retry (confirmed live:
+    # "will it burn, past 1000 days" against wildfire_detection, whose own description already
+    # covers "fire risk"/"burning"). A forced_tool_calls=[] is a deliberate "run nothing" request
+    # from the UI's manual picker, not a failure, so only retry the LLM-selection path.
+    if forced_tool_calls is None and not tool_calls:
+        retry_query = (
+            f"{query_text}\n\nNote: no tool seemed to match on the first pass. Reconsider each "
+            f"tool's description once more -- if the query is even loosely related to what a tool "
+            f"does, call it rather than declining."
+        )
+        tool_calls = llm_provider.select_tools(retry_query, tool_specs, input_summary)
+
     executed: list[tuple[ToolResult, dict, Optional[str]]] = []
     skip_warnings: list[str] = []
     retried = False

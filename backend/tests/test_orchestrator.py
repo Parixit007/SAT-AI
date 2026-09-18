@@ -340,3 +340,69 @@ def test_multiple_independent_tools_all_execute_and_preserve_call_order(sample_i
     assert set(calls_started) == {"slow_tool", "fast_tool"}  # both actually ran
     assert [r.tool_name for r in result.tool_results] == ["slow_tool", "fast_tool"]
     assert [t["name"] for t in result.trace.tools_used] == ["slow_tool", "fast_tool"]
+
+
+# --- retry when the LLM selects zero tools (see the "will it burn" live finding) ----------------
+
+
+def test_empty_first_selection_gets_one_retry_and_can_recover(sample_image):
+    """Tool-calling is probabilistic -- confirmed live, the same query ("will it burn, past 1000
+    days") against the real Groq-backed orchestrator declined to call anything once, then routed
+    correctly to wildfire_detection on an identical retry. A provider that returns [] on its first
+    call and a real tool on its second must actually recover, not just report the empty result."""
+
+    class DeclineThenPickProvider(LLMProvider):
+        def __init__(self):
+            self.call_count = 0
+
+        def select_tools(self, query, tool_specs, input_summary):
+            self.call_count += 1
+            if self.call_count == 1:
+                return []
+            return [ToolCall(tool_name="water_body_segmentation", arguments={})]
+
+    registry = build_default_registry()
+    provider = DeclineThenPickProvider()
+
+    result = handle_query("vague query", QueryInput(images=[sample_image]), provider, registry)
+
+    assert provider.call_count == 2  # confirms the retry path was actually exercised
+    assert result.trace.selected_task == "water_body_segmentation"
+    assert result.trace.warnings == []
+
+
+def test_still_empty_after_retry_is_a_clean_no_match_not_a_crash(sample_image):
+    """The retry is one extra attempt, not a loop -- a provider that declines twice in a row still
+    ends in the same honest "no tool matched" outcome, just after two calls instead of one."""
+
+    class AlwaysDeclineProvider(LLMProvider):
+        def __init__(self):
+            self.call_count = 0
+
+        def select_tools(self, query, tool_specs, input_summary):
+            self.call_count += 1
+            return []
+
+    registry = build_default_registry()
+    provider = AlwaysDeclineProvider()
+
+    result = handle_query("vague query", QueryInput(images=[sample_image]), provider, registry)
+
+    assert provider.call_count == 2
+    assert result.trace.selected_task == "unclassified"
+    assert "No tool call matched this query." in result.trace.warnings
+
+
+def test_forced_empty_tool_list_is_not_retried(sample_image):
+    """forced_tool_calls=[] (the UI's Advanced picker with no tools checked) is a deliberate 'run
+    nothing' request, not an LLM failure -- it must not trigger the empty-selection retry, which
+    would incorrectly fall back to asking the LLM to choose after all."""
+    registry = build_default_registry()
+    provider = StubProvider([ToolCall(tool_name="water_body_segmentation", arguments={})])
+
+    result = handle_query(
+        "irrelevant text", QueryInput(images=[sample_image]), provider, registry, forced_tool_calls=[]
+    )
+
+    assert result.trace.selected_task == "unclassified"
+    assert result.trace.tools_used == []
