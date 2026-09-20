@@ -854,7 +854,13 @@ Settings), checkpoints downloaded from the Output tab afterward.
   uninstall torchao`), adds a **pre-flight** that runs the exact LoRA / fp16-autocast-step / generate /
   merge / save / reload path on four synthetic images in the first two minutes — before any download —
   tries `hf_transfer` for the downloads with a `wget` fallback, and filters the eval references with
-  the same still-broken filter as training. **Results: _pending — fill in from the kernel log._**
+  the same still-broken filter as training. **v2 then ran out of GPU memory on its first real training
+  step at batch 32** (`CUDA out of memory ... 13.89 GiB in use` — the fp32 loss upcast alone is 32 × ~200
+  tokens × 49k vocab × 4 B ≈ 1.2GB; the 4-image pre-flight couldn't see it), after showing what the fast
+  path buys: the same zips downloaded in 57 s and 43 s (146 and 93 MB/s via `hf_transfer`, against
+  ~8 MB/s with `wget`), and a 21 s pre-flight. v3 makes the pre-flight also **pick the largest
+  micro-batch that fits** (worst-case-length forward+backward per candidate, 15% memory headroom) and
+  accumulates gradients up to the effective batch of 32. **Results: _pending — fill in from the kernel log._**
 
 VRSBench coordinate gotcha (verified against the actual data before writing the v2 grounding
 notebook, documented in its own cell too): `[refer]` boxes in `VRSBench_train.json` are **0-100
