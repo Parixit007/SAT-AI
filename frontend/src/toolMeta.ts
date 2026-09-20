@@ -32,7 +32,7 @@ export const EXAMPLE_PROMPT: Record<string, string> = {
   water_body_segmentation: "Highlight the water body referred to in the query.",
   groundwater_potential: "Should I dig a well/tubewell at this location?",
   visual_question_answering: "Describe the land-cover and major objects visible in this image.",
-  change_detection: "What changed between these two dates, and where did the change occur?",
+  change_detection: "Has the built-up area increased, decreased, or remained unchanged between these two dates?",
   optical_sar_fusion: "Use the optical and SAR images together to identify built-up and water-covered regions.",
   text_guided_grounding: "Highlight the ship near the harbor entrance.",
   wildfire_detection: "Is there any active wildfire near this location?",

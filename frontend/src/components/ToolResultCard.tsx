@@ -35,7 +35,7 @@ function DetailToggle({ children }: { children: ReactNode }) {
   );
 }
 
-function Bar({ label, value }: { label: string; value: number | null | undefined }) {
+function Bar({ label, value, percent = false }: { label: string; value: number | null | undefined; percent?: boolean }) {
   // A layer can be genuinely unavailable for a given location/image (e.g. groundwater's
   // soil_moisture coming back null when GEE has no coverage there) -- render that honestly
   // instead of crashing on null.toFixed(), per compute_groundwater_score()'s own "excluded, never
@@ -56,7 +56,7 @@ function Bar({ label, value }: { label: string; value: number | null | undefined
     <div className="stat-bar">
       <div className="stat-bar-head">
         <span>{label}</span>
-        <span className="data-value">{value.toFixed(2)}</span>
+        <span className="data-value">{percent ? `${(value * 100).toFixed(1)}%` : value.toFixed(2)}</span>
       </div>
       <div className="stat-bar-track">
         <div className="stat-bar-fill" style={{ width: `${pct}%` }} />
@@ -65,8 +65,14 @@ function Bar({ label, value }: { label: string; value: number | null | undefined
   );
 }
 
-function EvidenceImage({ url }: { url: string }) {
-  return <LightboxImage src={evidenceImageUrl(url)} alt="Visual evidence" className="evidence-image tool-card-evidence" />;
+function EvidenceImage({ url, wide = false }: { url: string; wide?: boolean }) {
+  return (
+    <LightboxImage
+      src={evidenceImageUrl(url)}
+      alt="Visual evidence"
+      className={`evidence-image tool-card-evidence ${wide ? "wide" : ""}`}
+    />
+  );
 }
 
 const GW_CATEGORY_CLASS: Record<string, string> = {
@@ -167,10 +173,47 @@ function FusionCard({ data, evidenceUrl }: { data: Record<string, unknown>; evid
       </span>
       {evidenceUrl && <EvidenceImage url={evidenceUrl} />}
       <DetailToggle>
-        <Bar label="Water (SAR)" value={waterSar} />
-        <Bar label="Water (optical)" value={waterOptical} />
-        <Bar label="Built-up (SAR-only, coarser read)" value={builtup} />
+        <Bar label="Water (SAR)" value={waterSar} percent />
+        <Bar label="Water (optical)" value={waterOptical} percent />
+        <Bar label="Built-up (SAR-only, coarser read)" value={builtup} percent />
       </DetailToggle>
+    </div>
+  );
+}
+
+interface ClassChange {
+  class: string;
+  before: number;
+  after: number;
+  net: number;
+  direction: "increased" | "decreased" | "unchanged";
+}
+
+interface Transition {
+  from: string;
+  to: string;
+  fraction: number;
+}
+
+function signedPct(fraction: number): string {
+  return `${fraction >= 0 ? "+" : "\u2212"}${Math.abs(fraction * 100).toFixed(1)}%`;
+}
+
+// One class's net area change as a diverging bar around a center line -- longest bar in the set
+// fills half the track, so the rows read against each other rather than against an absolute scale.
+function NetChangeRow({ change, scale }: { change: ClassChange; scale: number }) {
+  const width = Math.min(50, (Math.abs(change.net) / scale) * 50);
+  const up = change.net >= 0;
+  return (
+    <div className="delta-row">
+      <span className="delta-label">{change.class}</span>
+      <div className="delta-track" aria-hidden="true">
+        <div
+          className={`delta-fill ${up ? "delta-up" : "delta-down"}`}
+          style={up ? { left: "50%", width: `${width}%` } : { right: "50%", width: `${width}%` }}
+        />
+      </div>
+      <span className="data-value delta-value">{signedPct(change.net)}</span>
     </div>
   );
 }
@@ -178,16 +221,58 @@ function FusionCard({ data, evidenceUrl }: { data: Record<string, unknown>; evid
 function ChangeDetectionCard({ data, evidenceUrl }: { data: Record<string, unknown>; evidenceUrl: string | null }) {
   const fraction = Number(data.change_fraction ?? 0);
   const bbox = data.largest_region_bbox as [number, number, number, number] | null;
+  // Stage 2 (semantic model) adds per-class net change + transitions; Stage 1 (pixel differencing)
+  // returns only change_fraction/bbox, and renders exactly as it did before.
+  const classChanges = (data.class_changes ?? []) as ClassChange[];
+  const transitions = (data.transitions ?? []) as Transition[];
+  const semantic = data.method === "semantic" && classChanges.length > 0;
+  const buildings = classChanges.find((c) => c.class === "buildings");
+  const moved = classChanges.filter((c) => c.direction !== "unchanged").sort((a, b) => Math.abs(b.net) - Math.abs(a.net));
+  const scale = Math.max(0.01, ...classChanges.map((c) => Math.abs(c.net)));
+
   return (
     <div className="tool-card-body">
-      <Bar label="Changed area" value={fraction} />
-      {evidenceUrl && <EvidenceImage url={evidenceUrl} />}
-      {bbox && (
+      {semantic && buildings && (
+        <span className={`trend-badge trend-${buildings.direction}`}>
+          Built-up (buildings):{" "}
+          {buildings.direction === "unchanged" ? "unchanged" : `${buildings.direction} ${signedPct(buildings.net)}`}
+        </span>
+      )}
+      <Bar label="Changed area" value={fraction} percent />
+      {evidenceUrl && <EvidenceImage url={evidenceUrl} wide />}
+      {(semantic || bbox) && (
         <DetailToggle>
-          <dl className="kv-grid">
-            <dt>Region bbox</dt>
-            <dd className="data-value">[{bbox.map((n) => Math.round(n)).join(", ")}]</dd>
-          </dl>
+          {semantic && (
+            <>
+              <div className="detail-heading">Net area change by class (share of the whole scene)</div>
+              {moved.length > 0 ? (
+                moved.map((c) => <NetChangeRow key={c.class} change={c} scale={scale} />)
+              ) : (
+                <p className="tool-card-note">No class gained or lost a meaningful share of the scene.</p>
+              )}
+              {transitions.length > 0 && (
+                <>
+                  <div className="detail-heading">Largest transitions</div>
+                  <ul className="detection-list">
+                    {transitions.slice(0, 5).map((t, i) => (
+                      <li key={i}>
+                        <span>
+                          {t.from} → {t.to}
+                        </span>
+                        <span className="data-value">{(t.fraction * 100).toFixed(1)}%</span>
+                      </li>
+                    ))}
+                  </ul>
+                </>
+              )}
+            </>
+          )}
+          {bbox && (
+            <dl className="kv-grid">
+              <dt>Region bbox</dt>
+              <dd className="data-value">[{bbox.map((n) => Math.round(n)).join(", ")}]</dd>
+            </dl>
+          )}
         </DetailToggle>
       )}
     </div>
@@ -197,7 +282,7 @@ function ChangeDetectionCard({ data, evidenceUrl }: { data: Record<string, unkno
 function WaterSegmentationCard({ data, evidenceUrl }: { data: Record<string, unknown>; evidenceUrl: string | null }) {
   return (
     <div className="tool-card-body">
-      <Bar label="Water fraction" value={Number(data.water_fraction ?? 0)} />
+      <Bar label="Water fraction" value={Number(data.water_fraction ?? 0)} percent />
       {evidenceUrl && <EvidenceImage url={evidenceUrl} />}
     </div>
   );

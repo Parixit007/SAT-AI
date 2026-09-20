@@ -23,7 +23,7 @@ const CONFIDENCE_SEMANTICS: Record<string, string> = {
   visual_question_answering:
     "Mean generated-token probability -- a generation-likelihood proxy, not a calibrated chance the answer is correct.",
   change_detection:
-    "Otsu's between-class variance ratio -- how cleanly the pixel difference separates into changed/unchanged, a heuristic signal.",
+    "Semantic model score: how far the change mask's probabilities sit from the decision boundary, averaged with the classifier's top-class probability over the changed pixels -- not a calibrated probability. (The Stage 1 pixel-difference fallback reports Otsu's between-class variance ratio instead.)",
   optical_sar_fusion:
     "Reconciliation-based: higher where the SAR and optical reads agree, lower where they disagree (surfaced, not averaged away).",
   text_guided_grounding: "The grounding model's own detection score for the matched region.",
