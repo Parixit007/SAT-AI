@@ -1548,6 +1548,31 @@ button:disabled {
   border-radius: 2px;
 }
 
+.scene-caption {
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.scene-caption-label {
+  font-family: var(--data);
+  font-size: 10.5px;
+  letter-spacing: 0.02em;
+  color: var(--text-dim);
+}
+
+.scene-caption blockquote {
+  margin: 0;
+  padding: 9px 12px;
+  border-left: 3px solid var(--water);
+  background: var(--water-dim);
+  border-radius: 0 8px 8px 0;
+  font-size: 14px;
+  line-height: 1.5;
+  color: var(--text-bright);
+}
+
 .detection-headline {
   margin: 0;
   font-size: 15px;

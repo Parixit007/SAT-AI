@@ -168,8 +168,18 @@ function GroundingCard({ data, sourceImageUrl }: { data: Record<string, unknown>
 function SceneDescriptionCard({ data, sourceImageUrl }: { data: Record<string, unknown>; sourceImageUrl: string | null }) {
   const detections = (data.detections ?? []) as Detection[];
   const scanned = ((data.scanned_categories ?? []) as string[]).join(", ");
+  const caption = typeof data.caption === "string" && data.caption ? data.caption : null;
+  const notes = (data.notes ?? []) as string[];
   return (
     <div className="tool-card-body">
+      {caption && (
+        <figure className="scene-caption">
+          <figcaption className="scene-caption-label">
+            Generated description &middot; from a small remote-sensing model, so details and counts can be wrong
+          </figcaption>
+          <blockquote>{caption}</blockquote>
+        </figure>
+      )}
       <p className="detection-headline">
         <span className="detection-headline-count data-value">{detections.length}</span>
         {detections.length === 1 ? " object found" : " objects found"}
@@ -179,8 +189,12 @@ function SceneDescriptionCard({ data, sourceImageUrl }: { data: Record<string, u
         <GroundingOverlay imageUrl={evidenceImageUrl(sourceImageUrl)} detections={detections} />
       )}
       <p className="tool-card-note">
-        The scan only checks for {scanned || "a few object types"}; anything else in the scene is not reported here.
+        The object scan only checks for {scanned || "a few object types"}; anything else in the scene is not
+        counted here.
       </p>
+      {notes.map((n, i) => (
+        <p key={i} className="tool-card-note">{n}</p>
+      ))}
       {detections.length > 0 && <DetectionList detections={detections} />}
     </div>
   );

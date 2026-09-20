@@ -152,3 +152,13 @@ def test_nothing_is_composed_when_no_tool_ran(sample_image):
     result = handle_query("q", QueryInput(images=[sample_image]), provider, _fake_registry())
     assert result.answer_text == "No specialist tool produced a result for this query."
     assert provider.prompts == []
+
+
+def test_a_caption_reaches_the_prompt_with_its_reliability_caveat():
+    caption = "The image shows a large airport apron with many parked aircraft."
+    executed = [(ToolResult("scene_description", f"Description: {caption} Object scan: found 41 airplane(s).",
+                            {"caption": caption, "objects": [{"label": "airplane", "count": 41}]}, None, 0.55), {}, "ckpt")]
+    block = composer.build_evidence(executed, [])
+    assert caption in block
+    assert "cannot count reliably" in block and "counts are the reliable numbers" in block
+    assert "trust the detector's counts" in composer.SYSTEM_PROMPT

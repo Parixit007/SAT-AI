@@ -38,7 +38,9 @@ SYSTEM_PROMPT = (
     "failed, say which analysis was unavailable and what that means for the answer. Objects the "
     "detector did not report are not proof they are absent.\n"
     "4. Detector counts are what it found, not a guarantee: say 'about' or 'at least', and note that "
-    "some may be missed.\n"
+    "some may be missed. When a generated scene description and the detector disagree about what is "
+    "there or how many, trust the detector's counts and present the description as a general "
+    "impression rather than fact.\n"
     "5. Confidence values are the tools' own scores, not probabilities of being right. Don't quote them "
     "as numbers; use words (0.75+ fairly confident, 0.5-0.75 moderately, under 0.5 not very confident). "
     "Give fractions as percentages (0.58 -> 58%), not raw decimals.\n"
@@ -56,7 +58,7 @@ FRIENDLY_NAMES = {
     "optical_sar_fusion": "optical + SAR fusion analysis",
     "groundwater_potential": "groundwater-potential estimate (GIS layer overlay, not a trained model)",
     "wildfire_detection": "satellite fire-detection lookup (NASA FIRMS)",
-    "scene_description": "scene scan (object detector limited to airplanes, ships and storage tanks -- it cannot describe terrain, buildings or roads; its scores run low even for correct boxes, 0.3-0.5 is normal)",
+    "scene_description": "scene description (a written description from a small remote-sensing captioning model when one is installed -- fluent, but it can be wrong about details and cannot count reliably -- plus an object scan by the detector, limited to airplanes, ships and storage tanks; the scan's counts are the reliable numbers, and its scores run low even for correct boxes, 0.3-0.5 is normal)",
 }
 
 _MAX_LIST = 8

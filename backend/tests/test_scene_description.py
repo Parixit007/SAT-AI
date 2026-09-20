@@ -17,6 +17,13 @@ class StubScanner:
         return self.detections
 
 
+@pytest.fixture(autouse=True)
+def no_captions_unless_asked(monkeypatch):
+    """USE_CAPTIONS is decided at import by whether a gitignored checkpoint exists, so it differs
+    between machines -- pin it off here and let the caption tests opt in via `with_captions`."""
+    monkeypatch.setattr(adapter, "USE_CAPTIONS", False)
+
+
 @pytest.fixture
 def image(tmp_path):
     path = tmp_path / "scene.png"
@@ -56,3 +63,87 @@ def test_an_empty_scan_says_so_and_has_zero_confidence(image, monkeypatch):
     result = adapter._handle(QueryInput(images=[image]), {})
     assert "none found" in result.text_summary
     assert result.confidence == 0.0 and result.evidence_image_path is None and result.structured_data["objects"] == []
+
+
+# ---------------------------------------------------------------- the caption source
+
+class StubCaptioner:
+    def __init__(self, caption="The image shows a large airport apron with many parked aircraft.", confidence=0.6, error=None):
+        self.result = {"caption": caption, "confidence": confidence}
+        self.error, self.calls = error, 0
+
+    def describe(self, image_path):
+        self.calls += 1
+        if self.error:
+            raise self.error
+        return self.result
+
+
+@pytest.fixture
+def with_captions(monkeypatch):
+    monkeypatch.setattr(adapter, "USE_CAPTIONS", True)
+
+
+def test_caption_and_object_scan_are_both_reported(image, monkeypatch, with_captions):
+    captioner = StubCaptioner()
+    monkeypatch.setattr(adapter, "_get_captioner", lambda: captioner)
+    monkeypatch.setattr(grounding_adapter, "_get_tool", lambda: StubScanner([_det("airplane", 0.5, i) for i in range(3)]))
+
+    result = adapter._handle(QueryInput(images=[image]), {})
+
+    assert result.structured_data["caption"].startswith("The image shows a large airport apron")
+    assert result.structured_data["objects"] == [{"label": "airplane", "count": 3, "best_score": 0.5}]
+    assert "Description (written by a small remote-sensing captioning model" in result.text_summary
+    assert "found 3 airplane(s)" in result.text_summary
+    assert result.confidence == pytest.approx((0.6 + 0.5) / 2)  # the mean of what the two sources reported
+
+
+def test_a_failing_captioner_leaves_the_object_scan(image, monkeypatch, with_captions):
+    monkeypatch.setattr(adapter, "_get_captioner", lambda: StubCaptioner(error=RuntimeError("no checkpoint")))
+    monkeypatch.setattr(grounding_adapter, "_get_tool", lambda: StubScanner([_det("ship", 0.4)]))
+
+    result = adapter._handle(QueryInput(images=[image]), {})
+
+    assert result.structured_data["caption"] is None and result.structured_data["total_objects"] == 1
+    assert "description model unavailable (no checkpoint)" in result.text_summary
+    assert result.structured_data["notes"] == ["description model unavailable (no checkpoint)"]
+
+
+def test_a_failing_scan_leaves_the_caption(image, monkeypatch, with_captions):
+    class BrokenScanner:
+        def scan(self, *args, **kwargs):
+            raise RuntimeError("groundingdino missing")
+
+    monkeypatch.setattr(adapter, "_get_captioner", lambda: StubCaptioner(confidence=0.7))
+    monkeypatch.setattr(grounding_adapter, "_get_tool", lambda: BrokenScanner())
+
+    result = adapter._handle(QueryInput(images=[image]), {})
+
+    assert result.structured_data["caption"] and result.structured_data["objects"] == []
+    assert "object scan unavailable (groundingdino missing)" in result.text_summary
+    assert result.confidence == pytest.approx(0.7)
+    assert result.evidence_image_path is None
+
+
+def test_when_both_sources_fail_the_tool_fails(image, monkeypatch, with_captions):
+    class BrokenScanner:
+        def scan(self, *args, **kwargs):
+            raise RuntimeError("scan broke")
+
+    monkeypatch.setattr(adapter, "_get_captioner", lambda: StubCaptioner(error=RuntimeError("caption broke")))
+    monkeypatch.setattr(grounding_adapter, "_get_tool", lambda: BrokenScanner())
+
+    with pytest.raises(RuntimeError, match="scan broke.*caption broke|caption broke.*scan broke"):
+        adapter._handle(QueryInput(images=[image]), {})
+
+
+def test_the_captioner_is_not_touched_when_no_checkpoint_is_installed(image, monkeypatch):
+    monkeypatch.setattr(adapter, "USE_CAPTIONS", False)
+    captioner = StubCaptioner()
+    monkeypatch.setattr(adapter, "_get_captioner", lambda: captioner)
+    monkeypatch.setattr(grounding_adapter, "_get_tool", lambda: StubScanner([]))
+
+    result = adapter._handle(QueryInput(images=[image]), {})
+
+    assert captioner.calls == 0 and result.structured_data["caption"] is None
+    assert "Description" not in result.text_summary

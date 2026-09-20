@@ -29,7 +29,7 @@ const CONFIDENCE_SEMANTICS: Record<string, string> = {
   text_guided_grounding:
     "The detector's own score for the best box. This checkpoint's scores run low even for correct boxes (real objects typically score 0.3-0.5), so a Low bucket here is not evidence the boxes are wrong -- check them against the overlay.",
   scene_description:
-    "The detector's own score for the best box found (0 if nothing was found). Scores run low even for correct boxes, and the scan only covers airplanes, ships and storage tanks.",
+    "The average of what its sources reported: the captioner's mean token probability (how committed it was, not whether the description is true) and the detector's best box score (which runs low even for correct boxes). The object scan only covers airplanes, ships and storage tanks.",
   water_body_segmentation: "The segmentation model's own per-pixel confidence, averaged over the predicted mask.",
 };
 

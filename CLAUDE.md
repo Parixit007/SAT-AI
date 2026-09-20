@@ -26,6 +26,7 @@ backend/app/gis/        Esri map-area image capture (see the section below GEE)
 backend/tests/          pytest suite (mocked-LLM orchestrator tests, specialist smoke tests, API tests)
 frontend/               React + Vite + TS single-page app
 models/grounding/       GroundingTool (text-guided grounding, counting, category scan) -- working locally; vendor/ = gitignored Open-GroundingDino checkout
+models/captioning/      CaptionTool (SmolVLM-500M + VRSBench LoRA, scene descriptions) -- code done, checkpoint from Kaggle
 models/water_segmentation/   WaterSegmentationTool (water-body mask) -- working
 models/vqa/             VQATool (PaliGemma RSVQA-LR VQA) -- working, live-verified
 models/change_detection/   ChangeDetectionTool (pixel-diff, Stage 1) + SemanticChangeTool (Siamese semantic-change net, Stage 2)
@@ -125,7 +126,11 @@ decision (tool selection):
    **Execution** (parallel): the queued calls run through a small bounded `ThreadPoolExecutor`
    (`MAX_PARALLEL_TOOLS = 3`) instead of one at a time — safe because every adapter's lazy
    model-singleton getter is already thread-safe (`app/concurrency.py`'s `serialize_first_call`,
-   which only locks the get-or-build step, not inference itself), and `ThreadPoolExecutor.map`
+   which only locks the get-or-build step, not inference itself — and it is ONE process-wide
+   re-entrant lock, not one per getter: transformers' lazy imports aren't thread-safe, and the first
+   `scene_description` request after a restart, which builds the grounding detector and the captioner
+   in parallel threads, failed live with "Could not import module 'AutoProcessor'" until every getter
+   shared a lock), and `ThreadPoolExecutor.map`
    preserves input order regardless of which tool finishes first, so the trace/`tool_results` stay
    deterministic. Then `confidence.py` combines per-tool scores → **`answer_composer.py` phrases the
    answer** → `execution_trace.py` builds the
@@ -438,19 +443,32 @@ original React/Leaflet stack — `framer-motion`, see above.
   composer is told this tool can over-report on bright grey surfaces, and why it is not part of
   `scene_description`.
 - **`scene_description`** (`backend/app/specialists/scene_description_adapter.py`) — "describe/explain/
-  what is in this image". **Today an honest object inventory, not a caption**: `scan()` for
-  airplane/ship/storage tank only (`box_threshold=0.30`), counted per category, with the categories it
-  does NOT check stated in its own summary. The other 21 categories are excluded because they were
-  measured unreliable (see grounding above), and the other two sources that looked usable for a
-  description were measured wrong on exactly the imagery a user uploads: the water model (58% water on
-  an airport) and the VQA checkpoint (answered "rural" for Heathrow, confidence 0.72 — RSVQA-LR is
-  10 m Sentinel-2, applied to ~1 m aerial imagery). A wrong confident sentence is worse than a short
-  honest one. **The real fix is a remote-sensing captioner** (VRSBench fine-tune — the problem
-  statement names VRSBench for captioning) added as one more source in this tool; not built yet. An
-  opt-in generic vision LLM would give richer text immediately but sends the user's raw imagery to a
-  third-party API, a data flow this project has deliberately avoided (routing sees only a text
-  summary) and one the problem statement is wary of ("a generic VLM without remote-sensing adaptation
-  will not satisfy the requirements") — left as the user's call.
+  what is in this image". Two sources, each optional and failing independently (one failing leaves the
+  other; both failing fails the tool), run in parallel threads (detector on CPU, captioner on MPS):
+  **(1) a written description from the captioner** (`models/captioning/caption_tool.py`, below) — only
+  when its checkpoint is installed, decided once at import like change_detection's Stage 2
+  (`USE_CAPTIONS`; restart the backend after installing it; the router-facing tool description and
+  `checkpoint_id` follow the same flag; tests pin it off with an autouse fixture); presented as a
+  general impression that can be wrong about details and counts. **(2) an honest object inventory** —
+  `scan()` for airplane/ship/storage tank only (`box_threshold=0.30`), counted per category, with the
+  categories it does NOT check stated in its own summary; **its counts are the numbers to believe**
+  (the composer is told to trust them over the caption when they disagree). The other 21 categories are
+  excluded because they were measured unreliable (see grounding above), and the other two sources that
+  looked usable for a description were measured wrong on exactly the imagery a user uploads: the
+  water model (58% water on an airport) and the VQA checkpoint (answered "rural" for Heathrow,
+  confidence 0.72 — RSVQA-LR is 10 m Sentinel-2, applied to ~1 m aerial imagery). A wrong confident
+  sentence is worse than a short honest one. Confidence is the mean of what the available sources
+  reported (captioner mean token probability; detector best score).
+- **`captioning/caption_tool.py`** (`CaptionTool`) — SmolVLM-500M-Instruct with a VRSBench LoRA merged in
+  (a plain fp16 checkpoint directory, ~1GB, loaded in bfloat16 with `AutoModelForImageTextToText`; no
+  PEFT at inference), trained by `notebooks/kaggle_finetune_caption_vrsbench.ipynb`. `describe(image)
+  -> {"caption", "confidence"}`; confidence is the mean generated-token probability (how committed the
+  model was, not whether the description is true), captions cut off by the token limit are trimmed to
+  the last full sentence. Image splitting is OFF (a 512px image = 64 tokens; the default turns it into
+  1,088 and ~6 s). Checkpoint goes in gitignored `models/captioning/checkpoints/caption_model/`.
+  **Status: code and integration done and verified against a smoke-run checkpoint (8 training steps —
+  plumbing only, its captions are essentially the base model's); the real Kaggle run is in progress.**
+  Do not trust or ship it until the real checkpoint's captions have been read on real scenes.
 - All five image-based specialists (grounding, water segmentation, VQA, change detection, fusion)
   share one shape: a `*Tool` class with lazy imports + one inference method, plus a separate
   top-level `draw_*()` function for visualization.
@@ -796,6 +814,24 @@ Settings), checkpoints downloaded from the Output tab afterward.
   directly comparable with published SECOND-benchmark numbers (different crops and test split).
   Checkpoint is not in git: download `semantic_change_unet.pt` from the kernel
   `parixitsinghbalot/satquery-change-segmentation-second` (version 3) output.
+- **`kaggle_finetune_caption_vrsbench.ipynb`** — the captioner for `scene_description`: SmolVLM-500M-Instruct
+  (Apache-2.0, ungated; chosen to fit next to the other specialists on a 16GB laptop and to be safe in
+  fp16 on a T4, which has no bf16) + LoRA (r=32, text-model projections only; the vision encoder stays
+  frozen; the vision→text connector trains in full at ¼ LR) on VRSBench's 20,264 detailed captions
+  (mean 53 words), evaluated on 1,000 images of VRSBench's official eval set against a zero-shot
+  baseline on the same images (BLEU-1..4, ROUGE-L, CIDEr; one reference each so absolute numbers are
+  low — compare fine-tuned to zero-shot). Reads the two image zips (8.9GB + 4.2GB, downloaded from the
+  Hugging Face CDN inside the notebook) in place instead of extracting them. **Facts checked against the
+  real data before writing it**: the processor's default image splitting makes 1,088 image tokens vs 64
+  with it off; 75.6% of captions carry "GoogleEarth" provenance, ~14% name a satellite ("captured by GF
+  with medium resolution" — GF/JL are Gaofen/Jilin) and 2,164 claim "medium resolution", which would
+  teach the model to hallucinate a source and resolution for every image, so all of it is stripped from
+  targets *and* eval references by the same rules (18,626 of 20,264 train captions and 8,500 of 9,350
+  eval references survive the cleaning + a still-broken filter); no geometric augmentation (captions say
+  "on the left"); answer-only loss with the end-of-utterance token supervised; a mid-training
+  checkpoint of the trainable weights so a failed export can be redone without retraining. Run end to
+  end locally on real captions and real images (smoke mode, `CAP_SMOKE_TEST`/`CAP_DATA_ROOT`) before
+  spending GPU time. **Results: _pending — fill in from the kernel log._**
 
 VRSBench coordinate gotcha (verified against the actual data before writing the v2 grounding
 notebook, documented in its own cell too): `[refer]` boxes in `VRSBench_train.json` are **0-100

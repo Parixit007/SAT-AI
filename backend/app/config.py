@@ -15,6 +15,7 @@ EVIDENCE_DIR = DATA_DIR / "evidence"
 GROUNDING_CHECKPOINT = MODELS_DIR / "grounding" / "checkpoints" / "dior_rsvg_finetuned.pth"
 WATER_SEG_CHECKPOINT = MODELS_DIR / "water_segmentation" / "checkpoints" / "water_body_unet_final.pt"
 CHANGE_SEG_CHECKPOINT = MODELS_DIR / "change_detection" / "checkpoints" / "semantic_change_unet.pt"
+CAPTION_CHECKPOINT_DIR = MODELS_DIR / "captioning" / "checkpoints" / "caption_model"
 
 
 class Settings(BaseSettings):
