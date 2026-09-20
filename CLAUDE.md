@@ -843,7 +843,18 @@ Settings), checkpoints downloaded from the Output tab afterward.
   "on the left"); answer-only loss with the end-of-utterance token supervised; a mid-training
   checkpoint of the trainable weights so a failed export can be redone without retraining. Run end to
   end locally on real captions and real images (smoke mode, `CAP_SMOKE_TEST`/`CAP_DATA_ROOT`) before
-  spending GPU time. **Results: _pending — fill in from the kernel log._**
+  spending GPU time. **First real run (2026-09-20, v1) died after 34 minutes at `get_peft_model`** with
+  `ImportError: Found an incompatible version of torchao. Found version 0.10.0, but only versions above
+  0.16.0 are supported` — Kaggle's image ships an old torchao that the freshly `pip install`ed peft
+  refuses to import next to. Everything before it worked on real data: 20,262 captions all had images
+  (1,638 dropped by the still-broken filter → 18,324 train + 300 val), and the **zero-shot baseline on
+  1,000 eval images (T4, 569 s): BLEU-4 0.022, ROUGE-L 0.198, CIDEr 0.001, and 106 words on average
+  against the references' 46** — a chatty generic describer. The two downloads cost 21 of those minutes
+  (plain `wget`: 8.4GB train zip in 1,004 s ≈ 8 MB/s, 4.0GB val zip in 285 s). v2 fixes it (`pip
+  uninstall torchao`), adds a **pre-flight** that runs the exact LoRA / fp16-autocast-step / generate /
+  merge / save / reload path on four synthetic images in the first two minutes — before any download —
+  tries `hf_transfer` for the downloads with a `wget` fallback, and filters the eval references with
+  the same still-broken filter as training. **Results: _pending — fill in from the kernel log._**
 
 VRSBench coordinate gotcha (verified against the actual data before writing the v2 grounding
 notebook, documented in its own cell too): `[refer]` boxes in `VRSBench_train.json` are **0-100
