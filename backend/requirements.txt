@@ -19,5 +19,10 @@ requests
 pytest
 httpx
 
-# Grounding DINO (models/grounding/) is NOT pip-installable -- it's a git clone + local install.
-# See CLAUDE.md / models/grounding/grounding_tool.py's Setup docstring.
+# Grounding DINO (models/grounding/) is not a pip package -- it needs a git checkout at
+# models/grounding/vendor/Open-GroundingDino (see models/grounding/grounding_tool.py's Setup) plus:
+addict
+yapf
+termcolor
+pycocotools
+opencv-python-headless

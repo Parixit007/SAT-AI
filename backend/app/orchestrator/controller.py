@@ -7,6 +7,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
 
+from app.config import settings
+from app.orchestrator.answer_composer import compose_answer
 from app.orchestrator.confidence import combine_confidence
 from app.orchestrator.execution_trace import ExecutionTrace, build_trace
 from app.orchestrator.input_validation import validate_images
@@ -30,10 +32,9 @@ class QueryResult:
 
 
 def _synthesize_answer(executed: list[tuple[ToolResult, dict, Optional[str]]]) -> str:
-    """MVP answer synthesis: join each executed tool's own text summary. No second LLM call in
-    Phase 0 -- deliberately deterministic so numbers/boxes in the answer always match the trace.
-    Swap in an LLM-phrased rewrite here later; keep it constrained to rephrasing, never to
-    inventing numbers not present in the tool outputs it's given."""
+    """The deterministic answer: each executed tool's own text summary, joined. It is the fallback
+    for the LLM-phrased answer (answer_composer.py) and what that answer's numbers are checked
+    against, so it always matches the trace."""
     if not executed:
         return "No specialist tool produced a result for this query."
     return " ".join(result.text_summary for result, _, _ in executed)
@@ -182,13 +183,24 @@ def handle_query(
     if not executed and not all_warnings:
         all_warnings = all_warnings + ["No tool call matched this query."]
 
+    # Phrase the answer in plain language from what the tools found. Any failure keeps the
+    # deterministic text above; a note about it goes in the trace, but only after the confidence was
+    # computed -- a wording problem says nothing about how sure the analysis itself was.
+    trace_warnings = all_warnings
+    if executed and settings.compose_answers:
+        composed, composer_problem = compose_answer(llm_provider, query_text, executed, all_warnings, input_summary)
+        if composed:
+            answer_text = composed
+        if composer_problem:
+            trace_warnings = all_warnings + [composer_problem]
+
     trace = build_trace(
         selected_task=selected_task,
         executed=executed,
         input_summary=input_summary,
         confidence=confidence,
         confidence_bucket=bucket,
-        warnings=all_warnings,
+        warnings=trace_warnings,
     )
 
     evidence_paths = [result.evidence_image_path for result, _, _ in executed if result.evidence_image_path]

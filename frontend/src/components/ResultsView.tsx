@@ -26,7 +26,10 @@ const CONFIDENCE_SEMANTICS: Record<string, string> = {
     "Semantic model score: how far the change mask's probabilities sit from the decision boundary, averaged with the classifier's top-class probability over the changed pixels -- not a calibrated probability. (The Stage 1 pixel-difference fallback reports Otsu's between-class variance ratio instead.)",
   optical_sar_fusion:
     "Reconciliation-based: higher where the SAR and optical reads agree, lower where they disagree (surfaced, not averaged away).",
-  text_guided_grounding: "The grounding model's own detection score for the matched region.",
+  text_guided_grounding:
+    "The detector's own score for the best box. This checkpoint's scores run low even for correct boxes (real objects typically score 0.3-0.5), so a Low bucket here is not evidence the boxes are wrong -- check them against the overlay.",
+  scene_description:
+    "The detector's own score for the best box found (0 if nothing was found). Scores run low even for correct boxes, and the scan only covers airplanes, ships and storage tanks.",
   water_body_segmentation: "The segmentation model's own per-pixel confidence, averaged over the predicted mask.",
 };
 

@@ -4,6 +4,7 @@ from pathlib import Path
 from fastapi import APIRouter, HTTPException
 from starlette.concurrency import run_in_threadpool
 
+from app.api.web_preview import web_preview_path
 from app.config import UPLOADS_DIR, settings
 from app.orchestrator.controller import handle_query
 from app.orchestrator.input_validation import validate_images
@@ -90,8 +91,11 @@ async def run_query(payload: QueryRequest) -> QueryResponse:
     # actually had image input; location-only tools (groundwater, wildfire) have none. Every
     # image-based tool in this registry takes its primary image from images[0] (grounding is
     # single-image; the paired tools treat their two inputs symmetrically), so one shared URL
-    # covers all of them without needing per-tool bookkeeping.
-    source_image_url = f"/uploads/{image_paths[0].relative_to(UPLOADS_DIR)}" if image_paths else None
+    # covers all of them without needing per-tool bookkeeping. A TIFF (georeferenced upload, map
+    # capture) is swapped for a same-size PNG rendition, since browsers can't display TIFF.
+    source_image_url = (
+        f"/uploads/{web_preview_path(image_paths[0]).relative_to(UPLOADS_DIR)}" if image_paths else None
+    )
 
     tool_results_out = [
         ToolResultOut(

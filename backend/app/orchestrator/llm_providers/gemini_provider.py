@@ -49,3 +49,13 @@ class GeminiProvider(LLMProvider):
 
         calls = response.function_calls or []
         return [ToolCall(tool_name=c.name, arguments=dict(c.args or {})) for c in calls]
+
+    def generate_text(self, system: str, user: str) -> str:
+        from google.genai import types
+
+        config = types.GenerateContentConfig(system_instruction=system, temperature=0.3, max_output_tokens=2048)
+        try:
+            response = self._client.models.generate_content(model=self._model, contents=user, config=config)
+        except Exception as exc:
+            raise RuntimeError(f"Gemini request failed ({self._model}): {exc}") from exc
+        return (response.text or "").strip()

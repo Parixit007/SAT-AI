@@ -37,3 +37,6 @@ frontend/.vite/
 
 # OS
 .DS_Store
+
+# Vendored third-party checkout (git clone longzw1997/Open-GroundingDino) -- see models/grounding/grounding_tool.py
+models/grounding/vendor/

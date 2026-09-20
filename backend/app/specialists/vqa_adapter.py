@@ -46,12 +46,14 @@ def _handle(query_input: QueryInput, arguments: dict[str, Any]) -> ToolResult:
 TOOL_SPEC = ToolSpec(
     name="visual_question_answering",
     description=(
-        "Answer a free-form natural-language question about a single image -- presence ('is there "
-        "a road?'), counting ('how many buildings?'), comparison, or scene type (rural vs urban). "
-        "Use this for any question about image content that isn't asking to locate/outline a "
-        "specific object (use text_guided_grounding for that) or to measure water coverage (use "
-        "water_body_segmentation). Returns a short text answer. Its confidence score is the "
-        "model's generation likelihood, not a calibrated probability that the answer is correct."
+        "Answer a short question about a single image whose answer is one word: presence ('is there "
+        "a road?', 'is there a water area?'), comparison, or scene type (rural vs urban). The "
+        "checkpoint (RSVQA-LR) answers in one or two words and cannot describe or explain an image; "
+        "it was trained on coarse 10 m tiles, so it can be wrong on sharp aerial imagery. Do NOT use "
+        "it to count objects or to locate/highlight them (use text_guided_grounding), to describe or "
+        "explain the image (use scene_description), or to measure water coverage (use "
+        "water_body_segmentation). Its confidence score is the model's generation likelihood, not a "
+        "calibrated probability that the answer is correct."
     ),
     parameters_schema={
         "type": "object",

@@ -1503,6 +1503,10 @@ button:disabled {
 .grounding-overlay {
   position: relative;
   display: inline-block;
+  /* Inside the flex-column card body an inline-block child is stretched to the full card width, but
+     the boxes are positioned as a percentage of THIS element -- it must be exactly as wide as the
+     (max-height-limited) image, or every box lands right of where it belongs. */
+  align-self: flex-start;
   max-width: 100%;
   border-radius: 10px;
   overflow: hidden;
@@ -1537,6 +1541,47 @@ button:disabled {
 
 .grounding-box-score {
   opacity: 0.85;
+}
+
+.grounding-box-thin {
+  border-width: 1.5px;
+  border-radius: 2px;
+}
+
+.detection-headline {
+  margin: 0;
+  font-size: 15px;
+  color: var(--text);
+}
+
+.detection-headline-count {
+  font-size: 22px;
+  font-weight: 600;
+}
+
+.detection-headline-query {
+  color: var(--text-dim);
+}
+
+.detection-tally {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.detection-chip {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 5px;
+  padding: 2px 9px;
+  border: 1px solid;
+  border-radius: 999px;
+  font-size: 12px;
+  background: var(--glass);
+}
+
+.detection-chip-count {
+  font-weight: 600;
 }
 
 /* ============================== Lightbox ============================== */

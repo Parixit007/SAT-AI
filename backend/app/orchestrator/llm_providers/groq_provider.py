@@ -59,3 +59,18 @@ class GroqProvider(LLMProvider):
                 args = {}
             result.append(ToolCall(tool_name=tc.function.name, arguments=args))
         return result
+
+    def generate_text(self, system: str, user: str) -> str:
+        try:
+            # Phrasing an answer from facts already in the prompt needs no long chain of thought --
+            # "low" keeps the reasoning model's extra call to about a second.
+            response = self._client.chat.completions.create(
+                model=self._model,
+                messages=[{"role": "system", "content": system}, {"role": "user", "content": user}],
+                temperature=0.3,
+                max_completion_tokens=1200,
+                reasoning_effort="low",
+            )
+        except Exception as exc:
+            raise RuntimeError(f"Groq request failed ({self._model}): {exc}") from exc
+        return (response.choices[0].message.content or "").strip()

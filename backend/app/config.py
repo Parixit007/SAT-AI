@@ -13,7 +13,6 @@ UPLOADS_DIR = DATA_DIR / "uploads"
 EVIDENCE_DIR = DATA_DIR / "evidence"
 
 GROUNDING_CHECKPOINT = MODELS_DIR / "grounding" / "checkpoints" / "dior_rsvg_finetuned.pth"
-GROUNDING_CONFIG = MODELS_DIR / "grounding" / "GroundingDINO_SwinT_OGC.py"
 WATER_SEG_CHECKPOINT = MODELS_DIR / "water_segmentation" / "checkpoints" / "water_body_unet_final.pt"
 CHANGE_SEG_CHECKPOINT = MODELS_DIR / "change_detection" / "checkpoints" / "semantic_change_unet.pt"
 
@@ -35,6 +34,10 @@ class Settings(BaseSettings):
     # Groq rotates its hosted lineup often -- "llama-3.3-70b-versatile" was retired out from under
     # this default too. Verified tool-calling against the live /models list before picking this one.
     groq_model: str = "openai/gpt-oss-120b"
+
+    # Phrase the final answer with the LLM from the tools' own outputs (see answer_composer.py).
+    # Off = the deterministic join of each tool's text summary, exactly as before.
+    compose_answers: bool = True
 
     api_host: str = "127.0.0.1"
     api_port: int = 8000

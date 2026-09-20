@@ -9,7 +9,7 @@ export function CapabilitiesGallery({ tools, onPick }: { tools: ToolSpecOut[]; o
   return (
     <div className="homepage">
       <div className="homepage-hero">
-        <span className="homepage-eyebrow">SatQuery AI · 7 specialists, one query</span>
+        <span className="homepage-eyebrow">SatQuery AI · {tools.length} specialists, one query</span>
         <h1>Query the pipeline</h1>
         <p>
           Route a query to the right remote-sensing specialist automatically, or pick one yourself.

@@ -3,7 +3,7 @@ import { Fragment, useState, type ReactNode } from "react";
 import { evidenceImageUrl, type ToolResultOut } from "../api/client";
 import { TOOL_LABEL } from "../toolMeta";
 import { ChevronIcon } from "./icons";
-import { GroundingOverlay } from "./GroundingOverlay";
+import { DetectionTally, GroundingOverlay, type Detection } from "./GroundingOverlay";
 import { LightboxImage } from "./Lightbox";
 
 // Every card follows the same headline + optional expandable-detail shape: evidence imagery
@@ -128,35 +128,60 @@ function WildfireCard({ data }: { data: Record<string, unknown> }) {
   );
 }
 
-interface Detection {
-  phrase: string;
-  bbox_xyxy: [number, number, number, number];
-  score: number;
+function DetectionList({ detections }: { detections: Detection[] }) {
+  return (
+    <DetailToggle>
+      <ul className="detection-list">
+        {detections.map((d, i) => (
+          <li key={i}>
+            <span>{d.phrase}</span>
+            <span className="data-value">
+              {d.score.toFixed(2)} · [{d.bbox_xyxy.map((n) => Math.round(n)).join(", ")}]
+            </span>
+          </li>
+        ))}
+      </ul>
+    </DetailToggle>
+  );
 }
 
 function GroundingCard({ data, sourceImageUrl }: { data: Record<string, unknown>; sourceImageUrl: string | null }) {
   const detections = (data.detections ?? []) as Detection[];
   return (
     <div className="tool-card-body">
+      <p className="detection-headline">
+        <span className="detection-headline-count data-value">{detections.length}</span>
+        {detections.length === 1 ? " match" : " matches"}
+        {data.query ? <span className="detection-headline-query"> for &ldquo;{String(data.query)}&rdquo;</span> : null}
+      </p>
+      {detections.length > 0 && <DetectionTally detections={detections} />}
       {sourceImageUrl ? (
         <GroundingOverlay imageUrl={evidenceImageUrl(sourceImageUrl)} detections={detections} />
       ) : (
         <p className="tool-card-note">No source image available to overlay detections on.</p>
       )}
-      {detections.length > 0 && (
-        <DetailToggle>
-          <ul className="detection-list">
-            {detections.map((d, i) => (
-              <li key={i}>
-                <span>{d.phrase}</span>
-                <span className="data-value">
-                  {d.score.toFixed(2)} · [{d.bbox_xyxy.map((n) => Math.round(n)).join(", ")}]
-                </span>
-              </li>
-            ))}
-          </ul>
-        </DetailToggle>
+      {detections.length > 0 && <DetectionList detections={detections} />}
+    </div>
+  );
+}
+
+function SceneDescriptionCard({ data, sourceImageUrl }: { data: Record<string, unknown>; sourceImageUrl: string | null }) {
+  const detections = (data.detections ?? []) as Detection[];
+  const scanned = ((data.scanned_categories ?? []) as string[]).join(", ");
+  return (
+    <div className="tool-card-body">
+      <p className="detection-headline">
+        <span className="detection-headline-count data-value">{detections.length}</span>
+        {detections.length === 1 ? " object found" : " objects found"}
+      </p>
+      {detections.length > 0 && <DetectionTally detections={detections} />}
+      {sourceImageUrl && detections.length > 0 && (
+        <GroundingOverlay imageUrl={evidenceImageUrl(sourceImageUrl)} detections={detections} />
       )}
+      <p className="tool-card-note">
+        The scan only checks for {scanned || "a few object types"}; anything else in the scene is not reported here.
+      </p>
+      {detections.length > 0 && <DetectionList detections={detections} />}
     </div>
   );
 }
@@ -329,6 +354,9 @@ export function ToolResultCard({ result }: { result: ToolResultOut }) {
       break;
     case "text_guided_grounding":
       body = <GroundingCard data={data} sourceImageUrl={result.source_image_url} />;
+      break;
+    case "scene_description":
+      body = <SceneDescriptionCard data={data} sourceImageUrl={result.source_image_url} />;
       break;
     case "optical_sar_fusion":
       body = <FusionCard data={data} evidenceUrl={result.evidence_image_url} />;

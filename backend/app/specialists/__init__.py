@@ -7,6 +7,7 @@ from app.specialists.change_detection_adapter import TOOL_SPEC as CHANGE_DETECTI
 from app.specialists.fusion_adapter import TOOL_SPEC as FUSION_TOOL_SPEC
 from app.specialists.grounding_adapter import TOOL_SPEC as GROUNDING_TOOL_SPEC
 from app.specialists.groundwater_adapter import TOOL_SPEC as GROUNDWATER_TOOL_SPEC
+from app.specialists.scene_description_adapter import TOOL_SPEC as SCENE_DESCRIPTION_TOOL_SPEC
 from app.specialists.vqa_adapter import TOOL_SPEC as VQA_TOOL_SPEC
 from app.specialists.water_segmentation_adapter import TOOL_SPEC as WATER_SEG_TOOL_SPEC
 from app.specialists.wildfire_adapter import TOOL_SPEC as WILDFIRE_TOOL_SPEC
@@ -16,6 +17,7 @@ def build_default_registry() -> ToolRegistry:
     registry = ToolRegistry()
     registry.register(VQA_TOOL_SPEC)
     registry.register(GROUNDING_TOOL_SPEC)
+    registry.register(SCENE_DESCRIPTION_TOOL_SPEC)
     registry.register(WATER_SEG_TOOL_SPEC)
     registry.register(GROUNDWATER_TOOL_SPEC)
     registry.register(CHANGE_DETECTION_TOOL_SPEC)

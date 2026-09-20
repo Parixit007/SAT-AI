@@ -23,6 +23,14 @@ class LLMProvider(ABC):
         Gemini-vs-Groq comparison is measuring tool-calling quality, not vision understanding."""
         raise NotImplementedError
 
+    def generate_text(self, system: str, user: str) -> str:
+        """Plain text completion -- what the answer composer (orchestrator/answer_composer.py) uses
+        to phrase the final answer. Deliberately NOT abstract: select_tools is the only thing a
+        provider must do, and a provider that can't generate text just leaves the composer switched
+        off (it treats NotImplementedError like any other failure and keeps the deterministic
+        answer). Implementations normalise SDK errors to RuntimeError, like select_tools does."""
+        raise NotImplementedError
+
 
 def get_provider(name: str) -> LLMProvider:
     if name == "gemini":

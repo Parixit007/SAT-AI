@@ -25,7 +25,7 @@ backend/app/gee/        Google Earth Engine layer/scoring code (see GEE section 
 backend/app/gis/        Esri map-area image capture (see the section below GEE)
 backend/tests/          pytest suite (mocked-LLM orchestrator tests, specialist smoke tests, API tests)
 frontend/               React + Vite + TS single-page app
-models/grounding/       GroundingTool (text-guided region grounding) -- working
+models/grounding/       GroundingTool (text-guided grounding, counting, category scan) -- working locally; vendor/ = gitignored Open-GroundingDino checkout
 models/water_segmentation/   WaterSegmentationTool (water-body mask) -- working
 models/vqa/             VQATool (PaliGemma RSVQA-LR VQA) -- working, live-verified
 models/change_detection/   ChangeDetectionTool (pixel-diff, Stage 1) + SemanticChangeTool (Siamese semantic-change net, Stage 2)
@@ -52,6 +52,12 @@ cd frontend && npm run dev      # http://localhost:5173
 cd frontend && npm run build    # tsc -b && vite build
 ```
 Both together: `preview_start` with name `"backend"` and `"frontend"` (see `.claude/launch.json`).
+
+Grounding needs a one-time local setup (a git checkout plus a few pip packages -- see
+`models/grounding/grounding_tool.py`'s docstring): `git clone --depth 1
+https://github.com/longzw1997/Open-GroundingDino.git models/grounding/vendor/Open-GroundingDino` (gitignored)
+and `pip install addict yapf termcolor pycocotools opencv-python-headless`. Without it that one tool
+fails with a clear message; everything else runs.
 
 Copy `.env.example` (repo root) to `.env` and set `GEMINI_API_KEY` and/or `GROQ_API_KEY` before
 running real queries — without one, `/api/query` returns a clean 503, not a crash. Same pattern for
@@ -121,7 +127,8 @@ decision (tool selection):
    model-singleton getter is already thread-safe (`app/concurrency.py`'s `serialize_first_call`,
    which only locks the get-or-build step, not inference itself), and `ThreadPoolExecutor.map`
    preserves input order regardless of which tool finishes first, so the trace/`tool_results` stay
-   deterministic. Then `confidence.py` combines per-tool scores → `execution_trace.py` builds the
+   deterministic. Then `confidence.py` combines per-tool scores → **`answer_composer.py` phrases the
+   answer** → `execution_trace.py` builds the
    spec-required auditable summary (`selected_task`, `tools_used` incl. `checkpoint_id`,
    `confidence`, `warnings`, `timestamp`) from what actually ran, never from the LLM's own claims.
    Rejects only when there's neither an image nor a location at all — otherwise even a
@@ -137,6 +144,31 @@ decision (tool selection):
    `DEFAULT_REGISTRY` module-level singleton (built once, since registration is metadata-only) that
    both `routes_query.py` and `routes_tools.py` import, instead of each constructing its own.
 
+**The answer is phrased by the LLM from the tools' own outputs, not just joined**
+(`orchestrator/answer_composer.py`, added 2026-09-20 after a user tried "how many aeroplanes do you
+see" on an airport and got "no", then "explain the image" and got "Airport" — the specialists are
+terse by nature and the old deterministic join, `controller._synthesize_answer`, just concatenated
+their one-liners). `compose_answer()` gives `LLMProvider.generate_text()` the question, the input
+summary and an evidence block per tool (friendly tool name, its own score, its text summary, and its
+`structured_data` compacted — long detection lists become a count plus a score range, never dumped
+boxes), under a system prompt that confines it to the evidence: lead with the direct answer, be honest
+about weak or one-word tool answers and failed tools, say "about/at least" for detector counts, never
+quote scores as certainty, no invented objects/numbers. **Two guards keep the original promise that the
+numbers in the answer are the numbers in the trace**: `unsupported_numbers()` checks every multi-digit
+or decimal number in the draft against the evidence (plus the question and input summary), allowing
+rounding and fraction→percent, with one corrective retry and then a discard; single-digit integers
+aren't checked (too often plain counting words). Any failure — a provider without text generation
+(`generate_text` is deliberately not abstract), an API error, an empty/over-long draft, numbers that
+won't check out — keeps the deterministic text, and a note goes in the trace warnings *after*
+confidence is computed (a wording problem says nothing about how sure the analysis was). Switch off
+with `COMPOSE_ANSWERS=false`. `FRIENDLY_NAMES` carries each tool's known blind spots into the prompt
+(the water model over-reporting on bright grey surfaces, the RSVQA checkpoint being trained on 10 m
+tiles, the detector's habitually low scores) so the phrasing hedges where the tools are actually weak.
+The raw per-tool summaries are still in `tool_results`/the UI cards. Real-LLM catch worth knowing: the
+first version of the number check rejected `0.5832` even though it was quoted verbatim in the
+evidence (rounded to only 3 decimals) — found by running real Groq drafts through it, now covered by
+a test that fails if the rounding regresses.
+
 **`ToolResultOut`/`tool_results` — surfacing what each specialist actually computed.** Every
 adapter already returns a `ToolResult` with rich `structured_data` (groundwater's 5-layer scores,
 wildfire's status/brightness/dates, grounding's per-detection boxes+scores, fusion's SAR-vs-optical
@@ -150,7 +182,7 @@ static mount alongside the existing `/evidence` one). Building this in `routes_q
 additive alongside the existing flat `evidence_image_urls` — nothing was removed from the response
 shape, so nothing that read it before breaks.
 
-**`GET /api/tools`** (`api/routes_tools.py`) — registry metadata for all 7 specialists
+**`GET /api/tools`** (`api/routes_tools.py`) — registry metadata for all 8 specialists
 (`ToolSpecOut`: name/description/`parameters_schema`/image+location requirements/checkpoint id),
 served straight from `DEFAULT_REGISTRY.list_specs()`. Exists so the frontend's capabilities gallery
 and its manual tool-override picker both read from the live registry instead of a hand-maintained
@@ -214,7 +246,14 @@ behind the toggle — hiding it would undercut this app's whole evidence-grounde
 positioned as **percentages** of the image's own `naturalWidth`/`naturalHeight` (read via the
 `<img>`'s `onLoad`) rather than raw pixels — stays correctly aligned at any rendered display size
 with no resize listener needed, since `grounding_tool.py`'s `bbox_xyxy` is in that original image's
-absolute pixel space. `components/Lightbox.tsx` (`LightboxImage`) wraps every evidence/overlay
+absolute pixel space. With many detections (a count of 39 airplanes) per-box text labels just cover the
+image, so above 12 boxes the overlay draws thin outlines only, coloured by phrase, and the card's
+headline ("39 matches for "airplane"") plus a `DetectionTally` chip row ("39 airplane") carry the
+numbers; `SceneDescriptionCard` is the same shape for the object scan and always states which
+categories it checks. Browsers can't display TIFF — exactly what a georeferenced upload or a map
+capture is — so `routes_query.py` points `source_image_url` at a same-size PNG rendition written by
+`api/web_preview.py` (same pixel dimensions on purpose, since boxes are in the source's pixel space);
+found live when the overlay's image came up broken on a captured area. `components/Lightbox.tsx` (`LightboxImage`) wraps every evidence/overlay
 image so clicking it opens an enlarged view. A tool-card renderer trusts the backend's
 `structured_data` shape by casting it to a small local interface per tool (same level of rigor
 `client.ts`'s `assertShape()` already applies at the wire boundary — no schema-validation
@@ -312,11 +351,38 @@ original React/Leaflet stack — `framer-motion`, see above.
 
 ## Specialist models (`models/`)
 
-- **`grounding/grounding_tool.py`** (`GroundingTool`) — Grounding DINO fine-tuned on DIOR-RSVG.
-  `ground(image_path, query) -> [{"phrase", "bbox_xyxy", "score"}, ...]`. `groundingdino` (external,
-  `git clone longzw1997/Open-GroundingDino`) is **not installed** in this env yet — registering the
-  tool always works (metadata-only), but running it will raise until that setup step is done; see
-  the docstring at the top of that file. Device auto-selects `mps`/`cpu`.
+- **`grounding/grounding_tool.py`** (`GroundingTool`) — Grounding DINO fine-tuned on DIOR-RSVG
+  (+ VRSBench + DOTA, see v3 below). `ground(image_path, query, box_threshold=0.25, text_threshold=0.25,
+  top_k=None) -> [{"phrase", "bbox_xyxy", "score"}, ...]` returns every detection above threshold (a
+  count needs them all; near-duplicate same-phrase boxes at IoU>0.6 are merged) and `scan(image_path,
+  categories)` scores a multi-category prompt per category. **Now runs locally** (2026-09-20; it had
+  never run in this dev environment — the orchestrator returned "No module named 'groundingdino'" for
+  every grounding query): a gitignored `models/grounding/vendor/Open-GroundingDino` checkout plus a few
+  pip packages, CPU by default (~1.5-2 s/image on the M4, deterministic; `GROUNDING_DEVICE` overrides).
+  The checkout doesn't survive current PyTorch/transformers on a Mac, each fixed in `grounding_tool.py`
+  without editing the checkout: (1) `groundingdino.util.inference` imports paths the repo moved away
+  from, so load/predict are reimplemented; (2) `ms_deform_attn.py` hard-fails at import without the
+  compiled CUDA op even though its forward already falls back to pure PyTorch off-CUDA — a stub module
+  satisfies the import; (3) transformers>=5 dropped `BertModel.get_head_mask`/changed `BertEncoder`'s
+  signature, so `BertModelWarper` is patched (verified: identical to the stock BERT forward for 2D
+  masks — max diff 0.0 — and per-phrase block-diagonal 3D masks stay isolated: editing one phrase's
+  tokens changes only that phrase's outputs). Preprocessing was checked bit-identical to the
+  checkout's own transform across five image shapes; the v3 checkpoint loads with 0 missing/0
+  unexpected keys and the tool refuses to run otherwise.
+  **What it is and isn't good at, measured on real Esri imagery** (not assumed): counting compact,
+  repeated objects works well — 39 airplanes boxed on a Heathrow T5 apron with ~50 visible (nearly all
+  on real aircraft, no duplicates), 75 storage tanks on a Houston tank farm, 10 ships in a Singapore
+  port. It does *not* do the other DIOR/DOTA categories reliably at arbitrary scale: on 20 landmark
+  scenes tennis courts came back as swimming pools, Wembley as a basketball court, and bridges, dams,
+  roundabouts, athletics tracks, parked cars, pools and wind turbines mostly not at all. It is also
+  **very sensitive to wording**: "airplane" 39 boxes, "aeroplane" 41, the British plural "aeroplanes"
+  only 19, and the whole question "how many aeroplanes do you see" 3 — hence `grounding_adapter.
+  normalize_category_query()` (strips question scaffolding, singularises, maps aeroplane/aircraft/
+  plane→airplane, boat/vessel→ship, car/truck→vehicle; leaves real referring expressions alone). Its
+  scores run low even for correct boxes (real objects 0.3-0.5), so the Low confidence bucket does not
+  mean the boxes are wrong. Untested assumption to keep in mind: detection depends on ground
+  resolution — a 2.7 km capture (28 boxes) finds fewer aircraft than a 1.4 km one (39) because each
+  plane is fewer pixels.
   **Checkpoint swapped to v3, 2026-09-18** (`models/grounding/checkpoints/dior_rsvg_finetuned.pth`
   — the file itself is gitignored like every checkpoint, so this is a local-state change, not a git
   diff): `kaggle_eval_grounding_dino_v3.ipynb`'s real 3-way eval (1000-item DIOR-RSVG test subset)
@@ -365,6 +431,26 @@ original React/Leaflet stack — `framer-motion`, see above.
   real validation still needs actual satellite imagery. The old checkpoint (0.7638) isn't kept
   in-repo (checkpoints are gitignored) but the training log is preserved on the Kaggle kernel
   (`satquery-water-unet`) if a comparison is ever needed.
+  **Real-imagery finding (2026-09-20):** on nine real aerial scenes the water model is plausible
+  wherever there is water (Houston channel 30%, Singapore 45%, LA port 33%, Golden Gate 64%, farmland
+  2.8%) but reports **58% water for Heathrow airport (true ≈1%)** — bright grey concrete aprons read as
+  water — and 10% for an urban Wembley scene. Not a fix, a known blind spot; it is why the answer
+  composer is told this tool can over-report on bright grey surfaces, and why it is not part of
+  `scene_description`.
+- **`scene_description`** (`backend/app/specialists/scene_description_adapter.py`) — "describe/explain/
+  what is in this image". **Today an honest object inventory, not a caption**: `scan()` for
+  airplane/ship/storage tank only (`box_threshold=0.30`), counted per category, with the categories it
+  does NOT check stated in its own summary. The other 21 categories are excluded because they were
+  measured unreliable (see grounding above), and the other two sources that looked usable for a
+  description were measured wrong on exactly the imagery a user uploads: the water model (58% water on
+  an airport) and the VQA checkpoint (answered "rural" for Heathrow, confidence 0.72 — RSVQA-LR is
+  10 m Sentinel-2, applied to ~1 m aerial imagery). A wrong confident sentence is worse than a short
+  honest one. **The real fix is a remote-sensing captioner** (VRSBench fine-tune — the problem
+  statement names VRSBench for captioning) added as one more source in this tool; not built yet. An
+  opt-in generic vision LLM would give richer text immediately but sends the user's raw imagery to a
+  third-party API, a data flow this project has deliberately avoided (routing sees only a text
+  summary) and one the problem statement is wary of ("a generic VLM without remote-sensing adaptation
+  will not satisfy the requirements") — left as the user's call.
 - All five image-based specialists (grounding, water segmentation, VQA, change detection, fusion)
   share one shape: a `*Tool` class with lazy imports + one inference method, plus a separate
   top-level `draw_*()` function for visualization.
@@ -390,6 +476,14 @@ original React/Leaflet stack — `framer-motion`, see above.
   real ones. There is currently no true held-out RSVQA-LR split available locally for an honest
   accuracy number; the spot-check above used train examples, which the checkpoint may have seen
   during Google's own fine-tuning.
+  **Confirmed on a real airport image (2026-09-20)**: "How many aeroplanes are in the image?" →
+  "no" (a wrong answer *type*, the same failure as the earlier "yes" for a count), "Describe the
+  content of the image." → "Airport" (conf 0.12), and "Is it a rural or an urban area?" → "rural"
+  (0.72) for Heathrow. So counting was moved to `text_guided_grounding`, describing to
+  `scene_description`, and the VQA tool's own description now says it is for one-word presence /
+  rural-urban questions, that it cannot describe or count, and that it can be wrong on sharp aerial
+  imagery. Its answers are one or two words by construction — it was trained on RSVQA-LR's closed
+  label space — which is the "answers in one or two words, not a human way" the user reported.
 - **`groundwater_potential`** (`backend/app/specialists/groundwater_adapter.py` + `backend/app/gee/`)
   — location-based, not image-based (`uses_images=False`, `requires_location=True`). Estimates
   groundwater favorability ("should I dig a well/tubewell here?") via a weighted overlay of GEE

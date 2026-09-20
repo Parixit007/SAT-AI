@@ -10,6 +10,7 @@ export const TOOL_ICON: Record<string, string> = {
   groundwater_potential: "💧",
   wildfire_detection: "🔥",
   text_guided_grounding: "🎯",
+  scene_description: "🗺️",
   optical_sar_fusion: "🛰️",
   change_detection: "🔀",
   water_body_segmentation: "🌊",
@@ -19,7 +20,8 @@ export const TOOL_ICON: Record<string, string> = {
 export const TOOL_LABEL: Record<string, string> = {
   groundwater_potential: "Groundwater potential",
   wildfire_detection: "Wildfire detection",
-  text_guided_grounding: "Region grounding",
+  text_guided_grounding: "Object detection & counting",
+  scene_description: "Scene description",
   optical_sar_fusion: "Optical–SAR fusion",
   change_detection: "Change detection",
   water_body_segmentation: "Water segmentation",
@@ -31,9 +33,10 @@ export const TOOL_LABEL: Record<string, string> = {
 export const EXAMPLE_PROMPT: Record<string, string> = {
   water_body_segmentation: "Highlight the water body referred to in the query.",
   groundwater_potential: "Should I dig a well/tubewell at this location?",
-  visual_question_answering: "Describe the land-cover and major objects visible in this image.",
+  visual_question_answering: "Is there a road in this image?",
+  scene_description: "Describe the land-cover and major objects visible in this image.",
   change_detection: "Has the built-up area increased, decreased, or remained unchanged between these two dates?",
   optical_sar_fusion: "Use the optical and SAR images together to identify built-up and water-covered regions.",
-  text_guided_grounding: "Highlight the ship near the harbor entrance.",
+  text_guided_grounding: "How many airplanes are in this image?",
   wildfire_detection: "Is there any active wildfire near this location?",
 };
