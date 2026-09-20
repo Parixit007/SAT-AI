@@ -415,7 +415,8 @@ original React/Leaflet stack — `framer-motion`, see above.
   **The data dictated the design, not the original plan** (found by inspecting SECOND-CC before
   writing anything): the semantic maps only label *changed* regions — white `(255,255,255)` means
   "no change" and is identical in the A and B maps (0 of 10.7M pixels differed across 163 sampled
-  pairs), and the maps contain exactly 7 colours. So the planned "train a standalone 6-class
+  original pairs), and the original maps contain exactly 7 colours (the dataset's offline-augmented
+  copies do not — see below). So the planned "train a standalone 6-class
   land-cover segmenter on both timesteps" was not trainable from these labels (~85% of every image
   unlabeled). What the labels *do* determine exactly is net area change per class — unchanged
   pixels have the same class at both dates and cancel out of (area at t2) − (area at t1) — hence a
@@ -440,9 +441,24 @@ original React/Leaflet stack — `framer-motion`, see above.
   **Split leakage, found and fixed**: 246 crops appear in both train and test — the same physical
   pair time-reversed (`_ters_`), so the forward copy sits in test while its reverse is in train. The
   notebook drops any train/val entry whose (scene id, crop) appears in a later split (train
-  8,438→7,720, val 1,190→563 originals; the official test set stays intact and comparable) and
-  asserts no crop is shared afterward. Different crops of one scene can still straddle splits —
-  that's the dataset authors' own protocol. Both notebook and tool carry a byte-identical copy of
+  originals 4,219→3,860, val originals 595→563; the official test set stays intact and comparable)
+  and asserts no crop is shared afterward. Different crops of one scene can still straddle splits —
+  that's the dataset authors' own protocol.
+  **The offline-augmented copies (`_random_augment`, 4,814 of the 10,855 entries) are not trained on**
+  — found when the first Kaggle run died at its own palette assertion after the 11-minute download:
+  4.6% of pixels in a 300-pair random train sample weren't one of the 7 colours, though a local
+  check of 163 pairs had found exactly 7 (those 163 were all originals — a sample that happened to
+  contain zero augmented files, not evidence about them). Ten augmented pairs fetched from the zip
+  by range request and compared with their originals: each copy is a random 90° rotation/flip of the
+  original applied consistently to images and labels, and in 5 of the 7 copies of changed scenes an
+  additive +80 brightness shift was applied to the label maps too (palette colours come out as
+  `clip(colour + 80)`, e.g. buildings `(128,0,0)`→`(208,80,80)`); no-change ("png"-family) pairs
+  have all-white maps and are unaffected. Recoverable, but the copies add no scene content beyond
+  what online rotation/flip plus photometric jitter give, so training uses the 3,860 filtered
+  originals only, and the notebook now audits *every* label map in every split (~30 s) instead of
+  a sample — dropping train/val entries with unexpected colours (must stay ≤2%), never filtering
+  test, and failing fast (before any GPU time) if the palette assumption is wrong.
+  Both notebook and tool carry a byte-identical copy of
   the model definition (the notebook can't import from the repo); `tests/test_semantic_change.py`
   fails on drift, and was checked to actually catch a one-number change.
   Input handling: both images are resized to the training resolution (256×256 SECOND-CC crops) and
@@ -643,19 +659,26 @@ Settings), checkpoints downloaded from the Output tab afterward.
   model (`models/change_detection/semantic_change_tool.py`'s `SiameseSCDNet`) on SECOND-CC. Unlike
   every earlier notebook there is nothing to attach via Add Input: it downloads the 2.5GB zip from
   Zenodo itself (Kaggle's link to Zenodo is ~3.65MB/s vs ~100KB/s from a home connection, and
-  Zenodo 429s many small range requests), md5-verifies it, and extracts into `/kaggle/temp` — **not**
-  `/kaggle/working`, because everything under `/kaggle/working` is saved as the kernel's output and
-  ~43k extracted PNGs would bloat it (v1 extracted there — caught and re-pushed as v2 minutes
-  into its run, before it finished). Only
+  Zenodo 429s many small range requests), md5-verifies it, and extracts into scratch space —
+  `/kaggle/temp` if that exists, else `/tmp` (it was `/tmp` on the real T4 image; the run's log
+  printed `ROOT = /tmp/SECOND-CC-AUG`) — **not** `/kaggle/working`, because everything under
+  `/kaggle/working` is saved as the kernel's output and ~43k extracted PNGs would bloat it (v1
+  extracted there — caught and re-pushed as v2 minutes into its run, before it finished). Only
   `semantic_change_unet.pt` lands in the output (its metrics dict is embedded in the checkpoint; the
   full breakdown is in the kernel log). Reports SeK / IoU_change /
   Score (the SCD literature's own metrics) *plus* the two numbers this app actually surfaces: per-class
   net-change error and buildings direction accuracy (increased/decreased/unchanged, `NET_TOL = 0.005`)
   — the class-level SCD metrics can look fine while the user-facing verdict is wrong, so the notebook
   measures the verdict directly. The change-mask decision threshold is picked on the val split (not
-  test) and stored in the checkpoint. Verified before pushing by running the notebook's *own cells*
-  locally on real SECOND-CC data with an oracle model (must score ~perfect) and a null model (must
-  score ~zero) — `scratchpad`-only harness, not committed. Checkpoint install: download
+  test) and stored in the checkpoint. Trains on the 3,860 leak-filtered *original* train pairs (batch 16, 60
+  epochs, AdamW + warmup/cosine, AMP), with online 90° rotation/flip plus a mild per-date
+  brightness/contrast jitter on the imagery only. Verified before pushing by running the notebook's
+  *own cells* locally on real SECOND-CC data with an oracle model (must score ~perfect) and a null
+  model (must score ~zero) — `scratchpad`-only harness, not committed. **That local check missed the
+  augmented-copy problem** (it only ever saw original files) and the first real run failed on it —
+  a reminder that a local sample is only as representative as how it was picked; the audit now scans
+  everything, and was tested against the real brightness-shifted maps (it flags exactly the five
+  shifted copies of the ten fetched). Checkpoint install: download
   `semantic_change_unet.pt` from the kernel's Output tab into `models/change_detection/checkpoints/`
   (gitignored) and restart the backend. **Results (test split, real run): _pending — fill in from the
   kernel log once the run finishes._**
