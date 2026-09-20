@@ -61,6 +61,60 @@ def download_url(url: str, dest_path: Path, expected_min_bytes: int = 1024) -> b
         return False
 
 
+def download_url_resumable(url: str, dest_path: Path, expected_size: int, max_attempts: int = 60) -> bool:
+    """For big files on hosts that drop connections (Zenodo did, mid-download, on a 2.5GB zip --
+    `download_url` above deletes its `.part` file on any failure, so every drop restarts from zero).
+    Keeps the `.part` file between attempts and resumes with an HTTP Range request, backing off
+    between tries (and honouring `Retry-After` on a 429). Only `os.replace()`s onto `dest_path`
+    once the `.part` is exactly `expected_size` bytes, so a half-finished file is never mistaken
+    for a complete one; a failed run leaves the `.part` in place for the next invocation to resume."""
+    import time
+
+    if dest_path.exists() and dest_path.stat().st_size == expected_size:
+        print(f"[skip] {dest_path.name} already present", file=sys.stderr)
+        return True
+
+    dest_path.parent.mkdir(parents=True, exist_ok=True)
+    part_path = dest_path.with_suffix(dest_path.suffix + ".part")
+    last_report = 0
+    for attempt in range(1, max_attempts + 1):
+        have = part_path.stat().st_size if part_path.exists() else 0
+        if have == expected_size:
+            break
+        if have > expected_size:  # corrupt/oversized leftover -- start over
+            part_path.unlink()
+            have = 0
+        headers = {"Range": f"bytes={have}-"} if have else {}
+        print(f"[get] attempt {attempt}: {url} from byte {have:,}/{expected_size:,}", file=sys.stderr)
+        try:
+            with requests.get(url, stream=True, headers=headers, timeout=60) as resp:
+                if resp.status_code == 429:
+                    wait = int(resp.headers.get("Retry-After", 30))
+                    print(f"[429] rate limited -- waiting {wait}s", file=sys.stderr)
+                    time.sleep(wait)
+                    continue
+                resp.raise_for_status()
+                if have and resp.status_code != 206:
+                    print("[warn] server ignored the Range header -- restarting from byte 0", file=sys.stderr)
+                    have = 0
+                with open(part_path, "ab" if have else "wb") as f:
+                    for chunk in resp.iter_content(chunk_size=CHUNK_SIZE):
+                        f.write(chunk)
+                        pos = f.tell()
+                        if pos - last_report >= 100 * CHUNK_SIZE:
+                            last_report = pos
+                            print(f"[progress] {human_size(pos)} / {human_size(expected_size)}", file=sys.stderr)
+        except requests.RequestException as exc:
+            print(f"[retry] connection dropped ({type(exc).__name__}) -- will resume", file=sys.stderr)
+        time.sleep(min(60, 2 ** min(attempt, 6)))
+
+    if part_path.exists() and part_path.stat().st_size == expected_size:
+        os.replace(part_path, dest_path)
+        return True
+    print(f"[error] gave up on {url} after {max_attempts} attempts; partial file kept at {part_path} for resuming", file=sys.stderr)
+    return False
+
+
 def zenodo_record_files(record_id: str) -> list[dict]:
     """Looks up a Zenodo record's file list via its REST API (avoids hardcoding exact filenames,
     which drift between deposit versions)."""

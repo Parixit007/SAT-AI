@@ -5,12 +5,22 @@ follow-up), so a real accuracy check has to wait for that."""
 
 import pytest
 
+import app.specialists.change_detection_adapter as change_adapter
 from app.orchestrator.tool_registry import QueryInput
 from app.specialists.change_detection_adapter import TOOL_SPEC as CHANGE_DETECTION_TOOL_SPEC
 from app.specialists.change_detection_adapter import _handle as change_handle
 from app.specialists.fusion_adapter import TOOL_SPEC as FUSION_TOOL_SPEC
 from app.specialists.fusion_adapter import _handle as fusion_handle
 from app.specialists.water_segmentation_adapter import _handle as water_handle
+
+
+@pytest.fixture
+def stage1_only(monkeypatch):
+    """The Stage 2 checkpoint is gitignored, so whether change_detection runs Stage 1 or Stage 2 is
+    decided by a file that exists on a developer's machine but not in CI (change_detection_adapter
+    .USE_STAGE2, fixed at import). Tests about Stage 1's own behaviour pin it off rather than
+    silently passing in one environment and failing in the other."""
+    monkeypatch.setattr(change_adapter, "USE_STAGE2", False)
 
 
 def test_change_detection_tool_is_registered():
@@ -21,7 +31,10 @@ def test_change_detection_tool_is_registered():
     assert spec.min_images == 2 and spec.max_images == 2
     assert spec.compatible_modalities == ["optical"]
     assert spec.requires_location is False
-    assert spec.checkpoint_id is None  # Stage 1 is training-free
+    # Stage 1 is training-free (no checkpoint); Stage 2 reports its checkpoint file -- whichever the
+    # adapter decided on at import, the trace must agree with it.
+    expected = change_adapter.CHANGE_SEG_CHECKPOINT.name if change_adapter.USE_STAGE2 else None
+    assert spec.checkpoint_id == expected
 
 
 def test_fusion_tool_is_registered():
@@ -60,7 +73,7 @@ def test_water_segmentation_respects_custom_threshold(sample_image):
     assert 0.5 <= high.confidence <= 1.0
 
 
-def test_change_detection_finds_the_known_injected_region(change_pair_images):
+def test_change_detection_finds_the_known_injected_region(change_pair_images, stage1_only):
     before, after, expected_bbox = change_pair_images
 
     result = change_handle(QueryInput(images=[before, after]), {})
@@ -74,7 +87,7 @@ def test_change_detection_finds_the_known_injected_region(change_pair_images):
     assert result.evidence_image_path.exists()
 
 
-def test_change_detection_reports_no_change_for_identical_images(sample_image):
+def test_change_detection_reports_no_change_for_identical_images(sample_image, stage1_only):
     result = change_handle(QueryInput(images=[sample_image, sample_image]), {})
 
     assert result.structured_data["change_fraction"] == 0.0

@@ -30,7 +30,9 @@ def test_routes_bitemporal_query_to_change_detection(change_pair_images):
 
     assert result.trace.selected_task == "change_detection"
     assert result.trace.tools_used[0]["name"] == "change_detection"
-    assert result.trace.tools_used[0]["checkpoint_id"] is None
+    # None for Stage 1 (training-free), the checkpoint file for Stage 2 -- which one is active
+    # depends on a gitignored file, so compare against what the registry itself reports.
+    assert result.trace.tools_used[0]["checkpoint_id"] == registry.get("change_detection").checkpoint_id
     assert 0.0 <= result.confidence <= 1.0
 
 

@@ -15,6 +15,7 @@ EVIDENCE_DIR = DATA_DIR / "evidence"
 GROUNDING_CHECKPOINT = MODELS_DIR / "grounding" / "checkpoints" / "dior_rsvg_finetuned.pth"
 GROUNDING_CONFIG = MODELS_DIR / "grounding" / "GroundingDINO_SwinT_OGC.py"
 WATER_SEG_CHECKPOINT = MODELS_DIR / "water_segmentation" / "checkpoints" / "water_body_unet_final.pt"
+CHANGE_SEG_CHECKPOINT = MODELS_DIR / "change_detection" / "checkpoints" / "semantic_change_unet.pt"
 
 
 class Settings(BaseSettings):
