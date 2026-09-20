@@ -28,7 +28,7 @@ frontend/               React + Vite + TS single-page app
 models/grounding/       GroundingTool (text-guided region grounding) -- working
 models/water_segmentation/   WaterSegmentationTool (water-body mask) -- working
 models/vqa/             VQATool (PaliGemma RSVQA-LR VQA) -- working, live-verified
-models/change_detection/   ChangeDetectionTool (bi-temporal pixel-diff, Stage 1) -- working
+models/change_detection/   ChangeDetectionTool (pixel-diff, Stage 1) + SemanticChangeTool (Siamese semantic-change net, Stage 2)
 models/fusion/          FusionTool (SAR-backscatter water/built-up, Stage 1) -- working
 notebooks/               Kaggle training notebooks (see below)
 data/scripts/            download_{bigearthnet,vrsbench,rsvqa,cdvqa}.py + common.py
@@ -396,21 +396,62 @@ original React/Leaflet stack — `framer-motion`, see above.
   layers (rainfall, topographic wetness index, land cover, distance to surface water) — no model
   training involved, a deterministic GIS computation. See the GEE section below.
 - **`change_detection`** (`models/change_detection/change_detection_tool.py` +
+  `models/change_detection/semantic_change_tool.py` +
   `backend/app/specialists/change_detection_adapter.py`) — the spec's mandatory bi-temporal
   change-analysis capability. `min_images=2, max_images=2`, in acquisition order (first = earlier
-  date). **Stage 1 (current, training-free)**: classic Otsu-thresholded pixel differencing +
-  largest-connected-region bounding box — no checkpoint (`checkpoint_id=None`), works today with
-  no Kaggle dependency. Confidence is Otsu's between-class variance ratio (how cleanly the
-  difference separates into changed/unchanged), a heuristic signal, *not* a calibrated
-  probability. Can say *that* and roughly *where* something changed, not *which* land-cover class
-  changed — that needs Stage 2. **Stage 2 (planned)**:
-  `notebooks/kaggle_finetune_change_segmentation_second.ipynb`, a 6-class semantic segmentation
-  U-Net trained on SECOND-CC (Zenodo `16937571`, CC-BY-4.0, 6,041 bitemporal pairs + segmentation
-  maps + 30,205 change captions — chosen over the original CDVQA+SECOND path since SECOND itself
-  is Google-Drive-only with no stated license; SECOND-CC is SECOND-derived so should still
-  generalize to CDVQA-style eval queries), applied to both timesteps + a pure-Python area-delta
-  layer for class-aware summaries ("building area increased from 8% to 15%") and a real
-  multi-class spatial change map.
+  date). One tool name, **two stages behind it**, chosen once at import by whether the gitignored
+  checkpoint `models/change_detection/checkpoints/semantic_change_unet.pt` exists
+  (`change_detection_adapter.USE_STAGE2`; the trace's `checkpoint_id` and the tool description the
+  LLM router sees both follow the same decision, so restart the backend after adding/removing the
+  checkpoint — and tests that depend on Stage 1 pin it off with a fixture rather than on a file that
+  exists on one machine and not in CI). **Stage 1 (fallback, training-free)**: Otsu-thresholded
+  pixel differencing + largest-connected-region bbox — says *that* and roughly *where* something
+  changed, not *which* land-cover class; confidence is Otsu's between-class variance ratio, a
+  heuristic. **Stage 2 (`SemanticChangeTool`)**: a Siamese semantic-change network trained on
+  SECOND-CC that predicts a change mask plus a land-cover class map for *each date*, and reports
+  net area change per class (as a share of the whole scene), the top from→to transitions, and an
+  always-stated buildings verdict — the answer to the spec's own "has the built-up area increased,
+  decreased, or remained unchanged?", which Stage 1 fundamentally can't give.
+  **The data dictated the design, not the original plan** (found by inspecting SECOND-CC before
+  writing anything): the semantic maps only label *changed* regions — white `(255,255,255)` means
+  "no change" and is identical in the A and B maps (0 of 10.7M pixels differed across 163 sampled
+  pairs), and the maps contain exactly 7 colours. So the planned "train a standalone 6-class
+  land-cover segmenter on both timesteps" was not trainable from these labels (~85% of every image
+  unlabeled). What the labels *do* determine exactly is net area change per class — unchanged
+  pixels have the same class at both dates and cancel out of (area at t2) − (area at t1) — hence a
+  change network whose class loss ignores unchanged pixels, and `compute_class_changes()` (pure
+  numpy, unit-tested, invariant: net changes sum to zero). Architecture (`SiameseSCDNet`): one
+  ImageNet-pretrained ResNet34 encoder shared by both dates, one semantic decoder shared by both
+  dates, a separate change decoder over per-level `[fA, fB, |fA−fB|]` fusion; only smp's public
+  `get_encoder` is used (the decoders are written out, since smp's decoder constructor changed
+  between releases). Classes: water, bare ground, low vegetation, trees, buildings, playground.
+  **The two greens were decided from evidence, after an eyeball guess got them backwards**:
+  `(0,255,0)` = trees, `(0,128,0)` = low vegetation. Among images whose maps contain only the bright
+  green, 89% of captions mention "tree(s)" vs 33% for images with only the dark green (whose captions
+  lean sparse vegetation / farmland), and the imagery agrees — bright-green pixels are darker and
+  rougher (luminance 75.7 vs 85.2, 5×5 texture 11.1 vs 8.9). **Both samples are small** (9 vs 30
+  images for the caption test out of a 163-pair sample; 29 pairs / 36k vs 199k pixels for the imagery
+  test), and the first, larger caption-lift attempt was confounded by caption length and got
+  discarded — treat the assignment as well-supported, not proven; if the model's tree/low-vegetation
+  outputs ever look swapped on real imagery, this is the first place to look. Label balance in that
+  sample, as a share of labeled (changed) pixels, is very skewed (buildings 34%, bare ground 33%, low
+  vegetation 23%, trees 9%, **water 0.6%, playground 0.04%**), so water and playground are barely
+  learnable and the headline buildings class is the best-supported one.
+  **Split leakage, found and fixed**: 246 crops appear in both train and test — the same physical
+  pair time-reversed (`_ters_`), so the forward copy sits in test while its reverse is in train. The
+  notebook drops any train/val entry whose (scene id, crop) appears in a later split (train
+  8,438→7,720, val 1,190→563 originals; the official test set stays intact and comparable) and
+  asserts no crop is shared afterward. Different crops of one scene can still straddle splits —
+  that's the dataset authors' own protocol. Both notebook and tool carry a byte-identical copy of
+  the model definition (the notebook can't import from the repo); `tests/test_semantic_change.py`
+  fails on drift, and was checked to actually catch a one-number change.
+  Input handling: both images are resized to the training resolution (256×256 SECOND-CC crops) and
+  the predictions resampled back to the input's own size, so fractions/bbox are in the caller's
+  pixel space — a high-resolution capture is therefore downsampled harder than the training
+  imagery was, which can hurt small-object (building) recognition; tiling at native scale is the
+  obvious follow-up if that shows up in practice. `confidence` is a model score (change-head
+  certainty averaged with the classifier's top-class probability on changed pixels), *not* a
+  calibrated probability.
 - **`optical_sar_fusion`** (`models/fusion/fusion_tool.py` +
   `backend/app/specialists/fusion_adapter.py`) — the spec's mandatory cross-modal capability:
   "extract complementary information from a co-registered optical/multispectral and SAR image
@@ -598,6 +639,26 @@ Settings), checkpoints downloaded from the Output tab afterward.
   pairs — add via the notebook's Add Input panel, search by name). Exports the exact same
   checkpoint dict shape as the existing one, so it's a drop-in replacement for
   `water_segmentation_tool.py`.
+- **`kaggle_finetune_change_segmentation_second.ipynb`** — trains the Stage 2 change-detection
+  model (`models/change_detection/semantic_change_tool.py`'s `SiameseSCDNet`) on SECOND-CC. Unlike
+  every earlier notebook there is nothing to attach via Add Input: it downloads the 2.5GB zip from
+  Zenodo itself (Kaggle's link to Zenodo is ~3.65MB/s vs ~100KB/s from a home connection, and
+  Zenodo 429s many small range requests), md5-verifies it, and extracts into `/kaggle/temp` — **not**
+  `/kaggle/working`, because everything under `/kaggle/working` is saved as the kernel's output and
+  ~43k extracted PNGs would bloat it (v1 extracted there — caught and re-pushed as v2 minutes
+  into its run, before it finished). Only
+  `semantic_change_unet.pt` lands in the output (its metrics dict is embedded in the checkpoint; the
+  full breakdown is in the kernel log). Reports SeK / IoU_change /
+  Score (the SCD literature's own metrics) *plus* the two numbers this app actually surfaces: per-class
+  net-change error and buildings direction accuracy (increased/decreased/unchanged, `NET_TOL = 0.005`)
+  — the class-level SCD metrics can look fine while the user-facing verdict is wrong, so the notebook
+  measures the verdict directly. The change-mask decision threshold is picked on the val split (not
+  test) and stored in the checkpoint. Verified before pushing by running the notebook's *own cells*
+  locally on real SECOND-CC data with an oracle model (must score ~perfect) and a null model (must
+  score ~zero) — `scratchpad`-only harness, not committed. Checkpoint install: download
+  `semantic_change_unet.pt` from the kernel's Output tab into `models/change_detection/checkpoints/`
+  (gitignored) and restart the backend. **Results (test split, real run): _pending — fill in from the
+  kernel log once the run finishes._**
 
 VRSBench coordinate gotcha (verified against the actual data before writing the v2 grounding
 notebook, documented in its own cell too): `[refer]` boxes in `VRSBench_train.json` are **0-100
@@ -606,7 +667,7 @@ clip to [0,100], don't discard, then drop anything degenerate after clipping.
 
 ## Data acquisition (`data/scripts/`)
 
-Each `download_*.py` is idempotent and prints a file-count/size summary at the end. All four have
+Each `download_*.py` is idempotent and prints a file-count/size summary at the end. The first four have
 been run at least once (small ones fully, BigEarthNet only its cheapest non-gated subset) —
 current state in `data/raw/`:
 
@@ -614,6 +675,8 @@ current state in `data/raw/`:
   `github.com/YZHJessica/CDVQA` (hosted directly in the repo, not Drive — simpler than first
   planned). **Gap: no pixel data** — the actual pre/post image pairs come from the "SECOND" change
   detection dataset, not hosted in this repo; locating/downloading those images is still open.
+  (SECOND-CC below is SECOND-derived and does have pixels, but whether CDVQA's question image ids
+  map onto SECOND-CC's 256×256 crops has not been checked — don't assume it does.)
 - **`download_rsvqa.py`** — RSVQA-LR (Zenodo `6344333`) + RSVQA-HR *test-split JSONs only*
   (Zenodo `6344366`; its `Images.tar` alone is 13.5GB — `--hr-images` opts in). **Revised
   finding** (discovered live-verifying the VQA tool): despite downloading every file the Zenodo
@@ -634,6 +697,13 @@ current state in `data/raw/`:
   nothing; `--shard` fetches the smallest real option found, one `lc-col/bigearthnet` HDF5 test
   shard (~4.3GB). The actual large-subset pull for training belongs inside a Kaggle notebook, per
   the original plan — this script's job is local smoke-test data only.
+- **`download_second_cc.py`** — SECOND-CC (Zenodo `16937571`, CC-BY-4.0), the Stage 2 change-detection
+  training set: one 2.5GB zip, resumable (`common.download_url_resumable` — Range requests with
+  backoff, `.part` kept between attempts, needed because Zenodo throttles/drops home connections)
+  and md5-checked against the value Zenodo publishes; `--extract` unzips into `data/raw/second_cc/`.
+  Downloading it locally is only for inspection/smoke-testing — real training pulls its own copy
+  inside the Kaggle notebook. Layout and label semantics (white = "no change", the 7-colour palette,
+  the train/test crop leak) are documented in the `change_detection` entry above.
 
 ## Architecture notes carried over from the original grounding tool
 
