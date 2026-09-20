@@ -528,10 +528,11 @@ original React/Leaflet stack — `framer-motion`, see above.
   images for the caption test out of a 163-pair sample; 29 pairs / 36k vs 199k pixels for the imagery
   test), and the first, larger caption-lift attempt was confounded by caption length and got
   discarded — treat the assignment as well-supported, not proven; if the model's tree/low-vegetation
-  outputs ever look swapped on real imagery, this is the first place to look. Label balance in that
-  sample, as a share of labeled (changed) pixels, is very skewed (buildings 34%, bare ground 33%, low
-  vegetation 23%, trees 9%, **water 0.6%, playground 0.04%**), so water and playground are barely
-  learnable and the headline buildings class is the best-supported one.
+  outputs ever look swapped on real imagery, this is the first place to look. Label balance, as a
+  share of labeled (changed) pixels over the full 3,860-pair train split (measured by the notebook's
+  own audit; my 163-pair sample had under-counted water and playground): bare ground 33.0%, buildings
+  30.9%, low vegetation 23.8%, trees 10.3%, **water 1.3%, playground 0.8%** — so those two are rare and
+  the headline buildings class is the best-supported one.
   **Split leakage, found and fixed**: 246 crops appear in both train and test — the same physical
   pair time-reversed (`_ters_`), so the forward copy sits in test while its reverse is in train. The
   notebook drops any train/val entry whose (scene id, crop) appears in a later split (train
@@ -774,8 +775,27 @@ Settings), checkpoints downloaded from the Output tab afterward.
   everything, and was tested against the real brightness-shifted maps (it flags exactly the five
   shifted copies of the ten fetched). Checkpoint install: download
   `semantic_change_unet.pt` from the kernel's Output tab into `models/change_detection/checkpoints/`
-  (gitignored) and restart the backend. **Results (test split, real run): _pending — fill in from the
-  kernel log once the run finishes._**
+  (gitignored) and restart the backend (`USE_STAGE2` is decided at import). **Real run, 2026-09-20 (kernel
+  v3; v1/v2 never trained — see above): T4, 88 min for 60 epochs (~87 s/epoch), best val Score at epoch
+  29; the full-split label audit found 0 unexpected-colour pixels and 0 no-change mismatches in
+  train/val/test, and 26-29% of pairs are all-white "no change" pairs.** Val Score plateaued from about
+  epoch 12 (0.37-0.39) while train loss kept falling 2.4→0.75, i.e. it overfits past ~epoch 30 and the
+  best-by-val checkpoint is what ships. **Official test split (1,227 pairs, leak-filtered training,
+  change threshold 0.4 picked on val):** IoU_change 0.579, mIoU 0.739, **SeK 0.220, Score 0.376**,
+  semantic mIoU 0.548; per-class semantic IoU on truly-changed pixels — buildings 0.754, bare ground
+  0.612, low vegetation 0.577, trees 0.502, playground 0.431, water 0.414; net-area-change MAE in
+  percentage points of the scene — bare ground 4.7, low vegetation 4.1, buildings 2.6, trees 2.2,
+  water 0.4, playground 0.15. **Buildings direction (increased/decreased/unchanged at ±0.5% of the
+  scene): 84.1% correct overall (an "always unchanged" guess gets 40.5%), 81.6% when buildings really
+  changed**; confusion, true rows × predicted [decreased, unchanged, increased]: decreased [263, 43,
+  18], unchanged [27, 436, 34], increased [28, 45, 333] — the opposite direction was reported for 46 of
+  730 true changes (6.3%). Reading it honestly: large changes are captured well (a held-out
+  demolition pair: truth −51.5% buildings, reported −52.3%), while small building changes (a few % of
+  the scene) are often reported as "unchanged", and the rare classes are weaker; the reported
+  confidence (0.8-1.0 on most pairs) is model certainty, not a calibrated probability. These are not
+  directly comparable with published SECOND-benchmark numbers (different crops and test split).
+  Checkpoint is not in git: download `semantic_change_unet.pt` from the kernel
+  `parixitsinghbalot/satquery-change-segmentation-second` (version 3) output.
 
 VRSBench coordinate gotcha (verified against the actual data before writing the v2 grounding
 notebook, documented in its own cell too): `[refer]` boxes in `VRSBench_train.json` are **0-100
