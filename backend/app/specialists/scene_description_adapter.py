@@ -31,6 +31,18 @@ from app.specialists._loader import load_module
 SCAN_CATEGORIES = ["airplane", "ship", "storage tank"]
 BOX_THRESHOLD = 0.30  # a little stricter than a single-category count: an inventory shouldn't invent objects
 
+# Precision guard for the inventory (not for a user's explicit "how many X?", where a small count is a
+# legitimate answer). Measured on 21 real scenes at the 0.30 threshold: the true detections were
+# clusters (41 airplanes, 69 tanks, 6-11 ships) and a lone or paired weak hit was spurious every time
+# -- 2 "storage tanks" on Wembley Stadium (best 0.39), 3 on a golf course (0.32), 2 on Flushing Meadows,
+# 1 on a mall car park, an "airplane" in a parking lot. So a category is reported only when it has at
+# least MIN_COUNT boxes with a best score of MIN_BEST_SCORE, or a single hit so strong that it stands
+# alone. Conservative on purpose: it drops a couple of genuine tiny detections, and a description that
+# says "nothing found" is far less harmful than one that invents two storage tanks.
+MIN_COUNT = 3
+MIN_BEST_SCORE = 0.35
+CONFIDENT_SINGLE = 0.55
+
 # Decided once at import (restart the backend after installing the checkpoint), so the description the
 # router LLM sees, the trace and the behaviour always agree -- same pattern as change_detection.
 USE_CAPTIONS = (CAPTION_CHECKPOINT_DIR / "caption_meta.json").exists()
@@ -47,14 +59,32 @@ def _get_captioner():
     return _captioner
 
 
+def _reportable(scores: list[float]) -> bool:
+    best = max(scores)
+    return (len(scores) >= MIN_COUNT and best >= MIN_BEST_SCORE) or best >= CONFIDENT_SINGLE
+
+
 def _scan(image_path: str):
+    """Returns (reported detections, evidence image path, categories dropped by the precision guard)."""
     module = load_module(MODELS_DIR / "grounding" / "grounding_tool.py", "grounding_tool")
-    detections = grounding_adapter._get_tool().scan(image_path, SCAN_CATEGORIES, box_threshold=BOX_THRESHOLD)
+    found = grounding_adapter._get_tool().scan(image_path, SCAN_CATEGORIES, box_threshold=BOX_THRESHOLD)
+
+    by_label: dict[str, list[float]] = {}
+    for d in found:
+        by_label.setdefault(d["phrase"], []).append(d["score"])
+    kept = {label for label, scores in by_label.items() if _reportable(scores)}
+    unreported = [
+        {"label": label, "count": len(scores), "best_score": max(scores)}
+        for label, scores in by_label.items()
+        if label not in kept
+    ]
+    detections = [d for d in found if d["phrase"] in kept]
+
     evidence_path = None
     if detections:
         evidence_path = EVIDENCE_DIR / f"{uuid.uuid4().hex}.jpg"
         module.draw_boxes(image_path, detections, str(evidence_path))
-    return detections, evidence_path
+    return detections, evidence_path, unreported
 
 
 def _caption(image_path: str) -> dict[str, Any]:
@@ -68,10 +98,10 @@ def _handle(query_input: QueryInput, arguments: dict[str, Any]) -> ToolResult:
     with ThreadPoolExecutor(max_workers=2) as pool:
         scan_future = pool.submit(_scan, image_path)
         caption_future = pool.submit(_caption, image_path) if USE_CAPTIONS else None
-        errors, detections, evidence_path, caption = [], [], None, None
+        errors, detections, evidence_path, caption, unreported = [], [], None, None, []
         scan_ok = caption_ok = False
         try:
-            detections, evidence_path = scan_future.result()
+            detections, evidence_path, unreported = scan_future.result()
             scan_ok = True
         except Exception as exc:
             errors.append(f"object scan unavailable ({exc})")
@@ -121,6 +151,7 @@ def _handle(query_input: QueryInput, arguments: dict[str, Any]) -> ToolResult:
             "scanned_categories": SCAN_CATEGORIES,
             "detections": detections,
             "total_objects": len(detections),
+            "unreported": unreported,  # weak lone/paired detections the precision guard held back (audit trail only)
             "notes": errors,
         },
         evidence_image_path=evidence_path,

@@ -452,7 +452,19 @@ original React/Leaflet stack — `framer-motion`, see above.
   general impression that can be wrong about details and counts. **(2) an honest object inventory** —
   `scan()` for airplane/ship/storage tank only (`box_threshold=0.30`), counted per category, with the
   categories it does NOT check stated in its own summary; **its counts are the numbers to believe**
-  (the composer is told to trust them over the caption when they disagree). The other 21 categories are
+  (the composer is told to trust them over the caption when they disagree). **A precision guard holds
+  back weak lone/paired detections** (`MIN_COUNT=3` boxes with best score ≥0.35, or one hit ≥0.55):
+  measured on 21 real scenes at the 0.30 scan threshold, real detections were clusters (41 airplanes,
+  69 tanks, 6-11 ships) while a lone or paired weak hit was spurious every time — 2 "storage tanks" on
+  Wembley Stadium (best 0.39; found when a live "describe this image" reported them), 3 on a golf
+  course (0.32), 2 on Flushing Meadows, 1 on a mall car park. The guard yields no false positive on
+  those scenes and drops a couple of genuine tiny detections (2 planes at Boston Logan) — deliberately,
+  since "nothing found" harms less than invented objects. Held-back detections stay in
+  `structured_data["unreported"]` as an audit trail; a user's explicit "how many X?" (grounding) is
+  not filtered. **What "describe this image" does today, honestly**: the router picks this ONE tool
+  (not several); with no captioner installed it is only this inventory, so it is useful for airports,
+  ports and tank farms and says plainly that it can't describe anything else for farmland, a city or
+  a stadium. The other 21 categories are
   excluded because they were measured unreliable (see grounding above), and the other two sources that
   looked usable for a description were measured wrong on exactly the imagery a user uploads: the
   water model (58% water on an airport) and the VQA checkpoint (answered "rural" for Heathrow,

@@ -61,6 +61,15 @@ FRIENDLY_NAMES = {
     "scene_description": "scene description (a written description from a small remote-sensing captioning model when one is installed -- fluent, but it can be wrong about details and cannot count reliably -- plus an object scan by the detector, limited to airplanes, ships and storage tanks; the scan's counts are the reliable numbers, and its scores run low even for correct boxes, 0.3-0.5 is normal)",
 }
 
+# scene_description with no caption (no captioner installed, or it failed): don't let the label suggest
+# a captioning model exists -- the composer would otherwise write "the captioning model did not
+# provide a description", which is about a component the user never had.
+_SCENE_SCAN_ONLY = (
+    "object scan (object detector limited to airplanes, ships and storage tanks -- it cannot describe "
+    "terrain, buildings or roads, so say plainly that no fuller description of the scene is available; "
+    "its scores run low even for correct boxes, 0.3-0.5 is normal)"
+)
+
 _MAX_LIST = 8
 _MAX_EVIDENCE_CHARS = 1800
 _MAX_ANSWER_CHARS = 3000
@@ -92,6 +101,8 @@ def build_evidence(executed: list[tuple[ToolResult, dict, Optional[str]]], warni
     blocks = []
     for i, (result, _arguments, _checkpoint) in enumerate(executed, start=1):
         label = FRIENDLY_NAMES.get(result.tool_name, result.tool_name)
+        if result.tool_name == "scene_description" and not result.structured_data.get("caption"):
+            label = _SCENE_SCAN_ONLY
         details = json.dumps(_compact(result.structured_data), ensure_ascii=False, default=str)
         if len(details) > _MAX_EVIDENCE_CHARS:
             details = details[:_MAX_EVIDENCE_CHARS] + " ...(truncated)"

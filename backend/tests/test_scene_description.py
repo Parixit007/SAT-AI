@@ -41,7 +41,8 @@ def test_it_is_registered_as_a_single_image_tool():
 
 
 def test_it_counts_each_category_and_says_what_it_does_not_check(image, monkeypatch):
-    scanner = StubScanner([_det("airplane", 0.5, i) for i in range(3)] + [_det("ship", 0.35), _det("airplane", 0.31, 9)])
+    # 4 airplanes (a cluster) and one ship strong enough to stand alone
+    scanner = StubScanner([_det("airplane", 0.5, i) for i in range(3)] + [_det("airplane", 0.36, 9), _det("ship", 0.6)])
     monkeypatch.setattr(grounding_adapter, "_get_tool", lambda: scanner)
 
     result = adapter._handle(QueryInput(images=[image]), {})
@@ -49,13 +50,34 @@ def test_it_counts_each_category_and_says_what_it_does_not_check(image, monkeypa
     assert scanner.calls == [{"categories": ["airplane", "ship", "storage tank"], "box_threshold": 0.30}]
     assert result.structured_data["objects"] == [
         {"label": "airplane", "count": 4, "best_score": 0.5},
-        {"label": "ship", "count": 1, "best_score": 0.35},
+        {"label": "ship", "count": 1, "best_score": 0.6},
     ]
-    assert result.structured_data["total_objects"] == 5
+    assert result.structured_data["total_objects"] == 5 and result.structured_data["unreported"] == []
     assert "checks only airplane, ship and storage tank" in result.text_summary
     assert "4 airplane(s); 1 ship(s)" in result.text_summary
-    assert result.confidence == 0.5
+    assert result.confidence == 0.6
     assert result.evidence_image_path is not None and result.evidence_image_path.exists()
+
+
+@pytest.mark.parametrize("hits, reported", [
+    ([0.39, 0.35], False),              # two "storage tanks" on Wembley Stadium
+    ([0.32, 0.31, 0.30], False),        # three on a golf course: enough of them, but none strong enough
+    ([0.40, 0.34, 0.32], True),         # a small cluster with one decent hit (Singapore's ships)
+    ([0.30], False),                    # a lone weak hit
+    ([0.56], True),                     # a lone hit strong enough to stand alone
+    ([0.53, 0.36], False),              # a strong-looking pair is still only a pair (Flushing Meadows)
+])
+def test_the_precision_guard_holds_back_lone_and_paired_weak_detections(image, monkeypatch, hits, reported):
+    monkeypatch.setattr(grounding_adapter, "_get_tool", lambda: StubScanner([_det("storage tank", s, i) for i, s in enumerate(hits)]))
+
+    result = adapter._handle(QueryInput(images=[image]), {})
+
+    data = result.structured_data
+    assert (data["total_objects"] == len(hits)) is reported
+    assert (data["unreported"] == []) is reported
+    if not reported:
+        assert data["unreported"][0]["label"] == "storage tank" and data["unreported"][0]["count"] == len(hits)
+        assert "none found" in result.text_summary and result.evidence_image_path is None and result.confidence == 0.0
 
 
 def test_an_empty_scan_says_so_and_has_zero_confidence(image, monkeypatch):
@@ -100,11 +122,11 @@ def test_caption_and_object_scan_are_both_reported(image, monkeypatch, with_capt
 
 def test_a_failing_captioner_leaves_the_object_scan(image, monkeypatch, with_captions):
     monkeypatch.setattr(adapter, "_get_captioner", lambda: StubCaptioner(error=RuntimeError("no checkpoint")))
-    monkeypatch.setattr(grounding_adapter, "_get_tool", lambda: StubScanner([_det("ship", 0.4)]))
+    monkeypatch.setattr(grounding_adapter, "_get_tool", lambda: StubScanner([_det("ship", 0.4, i) for i in range(3)]))
 
     result = adapter._handle(QueryInput(images=[image]), {})
 
-    assert result.structured_data["caption"] is None and result.structured_data["total_objects"] == 1
+    assert result.structured_data["caption"] is None and result.structured_data["total_objects"] == 3
     assert "description model unavailable (no checkpoint)" in result.text_summary
     assert result.structured_data["notes"] == ["description model unavailable (no checkpoint)"]
 

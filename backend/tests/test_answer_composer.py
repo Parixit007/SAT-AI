@@ -162,3 +162,9 @@ def test_a_caption_reaches_the_prompt_with_its_reliability_caveat():
     assert caption in block
     assert "cannot count reliably" in block and "counts are the reliable numbers" in block
     assert "trust the detector's counts" in composer.SYSTEM_PROMPT
+
+
+def test_a_scene_scan_without_a_caption_does_not_mention_a_captioning_model():
+    executed = [(ToolResult("scene_description", "Object scan: none found.", {"caption": None, "objects": []}, None, 0.0), {}, "ckpt")]
+    block = composer.build_evidence(executed, [])
+    assert "captioning" not in block and "no fuller description" in block
