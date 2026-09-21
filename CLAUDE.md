@@ -473,8 +473,20 @@ original React/Leaflet stack — `framer-motion`, see above.
   a parking lot with ~80 cars 7 → 14, still 44 at 256 px tiles and a 0.22 threshold, only 11 of them in the
   dense lot) — good on streets, poor in packed lots, and it cannot detect buildings at all (prompting "house"
   boxed a few real roofs, the bus and empty road). Not wired into the app: cars need ≲0.3 m/px, and a "0
-  found" would be indistinguishable from "too coarse to see". **Training: `notebooks/kaggle_finetune_
-  landcover_openearthmap.ipynb` (see the notebooks section); status: run in progress — results below when in.**
+  found" would be indistinguishable from "too coarse to see". **Trained and installed (2026-09-21):
+  `notebooks/kaggle_finetune_landcover_openearthmap.ipynb`, checkpoint in `models/landcover/checkpoints/`
+  (gitignored) — validation mIoU 0.633, building IoU 0.77, 0.4-1.4 s per 1024 px image on the M4's CPU (numbers
+  and the by-eye check on real Esri scenes are in the notebooks section).** Roofs are reported by colour
+  FAMILY (`COLOR_FAMILY`: white or light grey / grey / dark grey or black / brown or tan / red or orange /
+  green / ...) because the fine bins fragmented one impression (a grey-and-white district measured 37% grey,
+  20% light grey, 15% white, 6% dark grey), and the sentence says "mostly" only when one family reaches 50%,
+  otherwise "a mix of". **End to end through the real app (Groq composer):** the Torrance suburb view →
+  buildings 25%, roads 18%, trees 16%, ~63 building outlines, roofs a mix of brown or tan / white / grey
+  alongside the caption's houses and parked cars; "how many buildings… roof colours?" → routed to
+  `land_cover_analysis` (the scene tool's description now says so); "how many cars?" → 140, tiled, "a lower
+  bound"; the Illinois crop fields (98% farmland) → the caption's "two tennis courts" called "likely
+  unreliable", and the Olympic forest → its "small ship" flagged because the detector and segmenter find no
+  water (the composer prompt now says to drop caption details the measurements contradict).
 - **`scene_description`** (`backend/app/specialists/scene_description_adapter.py`) — "describe/explain/
   what is in this image". Two sources, each optional and failing independently (one failing leaves the
   other; both failing fails the tool), run in parallel threads (detector on CPU, captioner on MPS):
@@ -881,9 +893,28 @@ Settings), checkpoints downloaded from the Output tab afterward.
   runs the train/save/reload path first and a batch picker chooses the largest batch that fits. **Verified
   locally before pushing** by running every cell end to end on eight real image/label pairs
   (`LC_SMOKE_TEST`/`LC_DATA_ROOT`). Pushed as kernel `parixitsinghbalot/satquery-landcover-oem` v1,
-  2026-09-21. Checkpoint install: download `lc_out/landcover_unet.pt` (~98MB, small enough for the CLI) into
-  `models/landcover/checkpoints/` (gitignored) and restart the backend. **Results: _pending — fill in from the
-  kernel log._**
+  2026-09-21. Checkpoint install: download `lc_out/landcover_unet.pt` (~98MB, small enough for the CLI; it took
+  20 s) into `models/landcover/checkpoints/` (gitignored) and restart the backend. **Real run (T4, 60.3 min of
+  training, ~65 min wall, 2.0 GPU-hours incl. evaluation): pre-flight 5 s; batch 16 (peak 4.6 of 15.6GB); 2,303
+  train / 384 val tiles; 6,888 steps (287 per epoch, ~151 s), best weights from epoch 23; no non-finite
+  steps. Note that all 75 regions appear in BOTH splits (the official split is by tile, not by region), so
+  validation flatters a genuinely new region. Full validation, native scale / half scale — mIoU 0.633 / 0.591,
+  pixel accuracy 0.777; IoU: building 0.771 / 0.699, water 0.763 / 0.726, agriculture 0.746 / 0.724, tree
+  0.682 / 0.636, road 0.596 / 0.524, developed space 0.550 / 0.484, rangeland 0.535 / 0.494, bareland 0.421 /
+  0.439; area-fraction error in percentage points of the scene: rangeland 5.6, developed space 3.6, tree 3.1,
+  agriculture 2.4, building 1.7, road 1.3, bareland 1.0, water 0.4; building count per tile true 75.5 vs
+  predicted 74.3, mean absolute error 21, median relative error 25%, correlation 0.883.** **Checked by eye on
+  real Esri scenes never seen in training** (contact sheets of original | overlay): the Brooklyn rows'
+  footprints and avenues, the Torrance houses, roads, tree crowns and even the two pools as small water patches
+  (~63 outlines against ~60-70 houses counted by eye), 98% agriculture on the Illinois crop fields and all four
+  Kansas pivot circles as farmland, 83% tree on the Olympic forest, 94% bareland on the Moroccan dunes, 99.8%
+  water on the lake, and on the Outer Banks beach the curving road, the ponds and a small building. **Where it
+  is wrong:** shadowed side streets in the Brooklyn view are called rangeland (22%), a dirt lot beside the
+  Mall of America is called agriculture, shadowed dune faces are called water (3.6%), the Alpine scree is
+  partly "developed space" and its small lake is missed, Hoover Dam's desert terrain is called rangeland,
+  Drax's cooling towers are called water, the low-contrast Louisiana marsh is 99.5% water (ambiguous even by
+  eye), and the hazy Iowa campus's tree canopy is called rangeland. Dense terraces merge into one outline, so
+  Brooklyn's 45 is well under the real number of houses.
 - **`kaggle_finetune_water_unet.ipynb`** — trains water-body segmentation from scratch (no prior
   notebook existed for this checkpoint) on the public "Satellite Images of Water Bodies" dataset
   (Kaggle, `franciscoescobar/satellite-images-of-water-bodies`, CC BY-NC-SA 4.0, 2841 image/mask

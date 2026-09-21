@@ -52,9 +52,9 @@ def test_roof_colours_come_from_inside_the_building_mask_only():
     image[10:90, 10:50] = (240, 240, 240)
     image[10:90, 50:90] = (200, 40, 40)
     colours = lc.roof_colors(image, mask)
-    assert {c["name"] for c in colours} == {"white", "red"}     # the blue outside the mask never votes
+    assert {c["name"] for c in colours} == {"white or light grey", "red or orange"}     # the blue outside the mask never votes
     assert all(0.45 <= c["share"] <= 0.55 for c in colours)
-    white = next(c for c in colours if c["name"] == "white")
+    white = next(c for c in colours if c["name"] == "white or light grey")
     assert white["rgb"] == [240, 240, 240]
 
 
@@ -115,7 +115,7 @@ def test_analyze_reports_fractions_count_colours_and_confidence(tmp_path):
     assert result["class_map"].shape == (120, 160) and result["image_size"] == [160, 120]
     assert result["fractions"]["building"] == pytest.approx(1.0)
     assert result["building_count"] == 1                   # one connected region: the whole frame
-    assert [c["name"] for c in result["roof_colors"]] == ["white"]
+    assert [c["name"] for c in result["roof_colors"]] == ["white or light grey"]
     assert 0.9 < result["confidence"] <= 1.0
 
 
@@ -127,3 +127,24 @@ def test_the_overlay_adds_a_legend_strip_below_the_image(tmp_path):
     out = tmp_path / "overlay.jpg"
     lc.draw_overlay(str(src), class_map, str(out))
     assert Image.open(out).size == (120, 80 + 22)
+
+
+def test_asking_for_every_colour_lists_only_the_colours_that_are_present():
+    image = np.zeros((60, 60, 3), dtype=np.uint8)
+    image[:, :30] = (240, 240, 240)
+    image[:, 30:] = (200, 40, 40)
+    mask = np.ones((60, 60), dtype=bool)
+    colours = lc.roof_colors(image, mask, min_share=0.0)  # used to raise on the colours with no pixels (NaN mean)
+    assert {c["name"] for c in colours} == {"white or light grey", "red or orange"}
+
+
+def test_neighbouring_shades_are_reported_as_one_colour_family():
+    image = np.zeros((80, 80, 3), dtype=np.uint8)
+    image[:, :20] = (250, 250, 250)   # white
+    image[:, 20:40] = (200, 200, 200)  # light grey
+    image[:, 40:60] = (60, 60, 60)    # dark grey
+    image[:, 60:] = (10, 10, 10)      # very dark
+    colours = lc.roof_colors(image, np.ones((80, 80), dtype=bool))
+    shares = {c["name"]: c["share"] for c in colours}
+    assert set(shares) == {"white or light grey", "dark grey or black"}
+    assert all(0.45 <= v <= 0.55 for v in shares.values())

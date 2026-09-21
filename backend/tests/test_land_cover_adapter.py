@@ -29,8 +29,14 @@ def test_the_summary_lists_classes_largest_first_and_leaves_out_specks():
 def test_the_summary_states_the_limits_of_the_building_count_and_roof_colours():
     text = adapter.summarize(FACTS)
     assert "About 62 separate building outlines" in text and "dense blocks are under-counted" in text
-    assert "Roofs are mostly white (41%), grey (28%) and red (12%)" in text  # top three; brown (6%) is left out
+    assert "Roofs are a mix of white (41%), grey (28%) and red (12%)" in text  # no colour reaches 50%; top three, brown (6%) left out
     assert "shadows can look like dark roofs" in text
+
+
+def test_roofs_are_called_mostly_one_colour_only_when_it_dominates():
+    facts = {**FACTS, "roof_colors": [{"name": "white or light grey", "share": 0.62, "rgb": [230, 230, 228]},
+                                     {"name": "brown or tan", "share": 0.2, "rgb": [150, 120, 90]}]}
+    assert "Roofs are mostly white or light grey (62%) and brown or tan (20%)" in adapter.summarize(facts)
 
 
 def test_no_buildings_says_so_and_skips_the_roofs():

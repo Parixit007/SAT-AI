@@ -228,7 +228,8 @@ TOOL_SPEC = ToolSpec(
         + _WHAT_IT_RETURNS
         + " Use it for general requests only: for a specific question use the specific tool "
         "(counting or locating a named object -> text_guided_grounding; water coverage -> "
-        "water_body_segmentation; a yes/no or rural-vs-urban question -> visual_question_answering)."
+        "water_body_segmentation; how much is built-up or vegetated, how many buildings, roof colours -> "
+        "land_cover_analysis; a yes/no or rural-vs-urban question -> visual_question_answering)."
     ),
     parameters_schema={"type": "object", "properties": {}, "required": []},
     min_images=1,

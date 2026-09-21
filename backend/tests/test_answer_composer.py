@@ -201,3 +201,7 @@ def test_the_land_cover_tool_has_its_own_plain_name_and_caveats():
 def test_the_prompt_tells_the_model_to_hedge_building_counts_and_trust_measurements():
     assert "buildings that touch merge" in composer.SYSTEM_PROMPT
     assert "trust the detector's counts" in composer.SYSTEM_PROMPT and "land-cover shares" in composer.SYSTEM_PROMPT
+
+
+def test_the_prompt_tells_the_model_to_drop_caption_details_the_measurements_contradict():
+    assert "implausible" in composer.SYSTEM_PROMPT and "leave that detail out" in composer.SYSTEM_PROMPT

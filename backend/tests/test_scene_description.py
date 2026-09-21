@@ -208,7 +208,7 @@ def test_land_cover_is_reported_next_to_the_object_scan(image, monkeypatch, with
 
     assert result.structured_data["land_cover"] == LAND_FACTS
     assert "building 40%" in result.text_summary and "About 62 separate building outlines" in result.text_summary
-    assert "Roofs are mostly white (60%) and grey (30%)" in result.text_summary
+    assert "Roofs are mostly white (60%) and grey (30%)" in result.text_summary  # the fixture's top colour is >= 50%
     assert "found 3 ship(s)" in result.text_summary
     assert result.confidence == pytest.approx((0.8 + 0.5) / 2)
 

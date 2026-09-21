@@ -86,8 +86,9 @@ def summarize(facts: dict[str, Any]) -> str:
         )
     roofs = [c for c in facts.get("roof_colors", []) if c["share"] >= 0.05][:MAX_ROOF_COLOURS]
     if roofs and buildings >= SHOW_MIN_SHARE:
+        lead = "mostly" if roofs[0]["share"] >= 0.5 else "a mix of"  # "mostly" only when one colour family really dominates
         sentences.append(
-            "Roofs are mostly " + _join([f"{c['name']} ({_percent(c['share'])})" for c in roofs])
+            f"Roofs are {lead} " + _join([f"{c['name']} ({_percent(c['share'])})" for c in roofs])
             + " (colours read from the image; shadows can look like dark roofs)."
         )
     return " ".join(sentences)

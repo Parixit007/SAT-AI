@@ -110,13 +110,25 @@ def color_name_indices(rgb: np.ndarray) -> np.ndarray:
     return idx
 
 
+# Roofs are reported by colour FAMILY: the fine names split one visual impression into pieces (a grey-and-white
+# district measured 37% grey, 20% light grey, 15% white, 6% dark grey), and the boundaries between them are set by
+# lighting, not by the roofs.
+COLOR_FAMILY = {
+    "white": "white or light grey", "light grey": "white or light grey", "grey": "grey",
+    "dark grey": "dark grey or black", "very dark": "dark grey or black",
+    "red": "red or orange", "orange": "red or orange", "brown": "brown or tan", "tan": "brown or tan",
+    "yellow": "yellow", "green": "green", "blue": "blue", "purple": "purple",
+}
+FAMILY_NAMES = list(dict.fromkeys(COLOR_FAMILY[n] for n in COLOR_NAMES))
+
+
 def name_color(rgb) -> str:
     """The plain name of one RGB colour."""
     return COLOR_NAMES[int(color_name_indices(np.array([rgb], dtype=np.uint8))[0])]
 
 
 def roof_colors(image: np.ndarray, building_mask: np.ndarray, min_share: float = 0.05, max_samples: int = 40000) -> List[Dict[str, Any]]:
-    """The roof colours of the building mask: the share of building pixels in each named colour (largest first,
+    """The roof colours of the building mask: the share of building pixels in each colour FAMILY (largest first,
     only shares of at least `min_share`), with the mean RGB of those pixels for display. The mask is eroded by one
     pixel first so the mixed pixels at roof edges do not vote."""
     from scipy import ndimage
@@ -130,13 +142,14 @@ def roof_colors(image: np.ndarray, building_mask: np.ndarray, min_share: float =
         return []
     if len(pixels) > max_samples:
         pixels = pixels[np.random.default_rng(0).choice(len(pixels), max_samples, replace=False)]
-    idx = color_name_indices(pixels)
+    family_of = np.array([FAMILY_NAMES.index(COLOR_FAMILY[name]) for name in COLOR_NAMES])
+    idx = family_of[color_name_indices(pixels)]
     out = []
-    for i in np.argsort(-np.bincount(idx, minlength=len(COLOR_NAMES))):
+    for i in np.argsort(-np.bincount(idx, minlength=len(FAMILY_NAMES))):
         share = float((idx == i).sum()) / len(idx)
-        if share < min_share:
+        if share <= 0 or share < min_share:  # families with no pixels at all must never be listed (their mean is undefined)
             break
-        out.append({"name": COLOR_NAMES[int(i)], "share": round(share, 4), "rgb": [int(v) for v in pixels[idx == i].mean(0).round()]})
+        out.append({"name": FAMILY_NAMES[int(i)], "share": round(share, 4), "rgb": [int(v) for v in pixels[idx == i].mean(0).round()]})
     return out
 
 
