@@ -538,18 +538,32 @@ original React/Leaflet stack — `framer-motion`, see above.
   "small vehicles" for what are probably wind-turbine dots), and Singapore's container stacks called
   "large vehicles"; several claims first judged spurious were real (Yankee Stadium does have a running
   track beside it; the LA interchange scene has a sports field bottom-left). Its confidence does not
-  separate good from bad. **The land-cover gap that motivated round two was never demonstrated** — the 21
-  scenes contain no real farmland, forest or desert (the two natural ones, Altamont grassland and Hoover
-  Dam's canyon, came out partly right and right), so a fresh natural-scene set, verified by eye BEFORE
-  scoring, is still owed. The un-tuned base model is still worse, but for a different reason than first
+  separate good from bad. **The 21 scenes contain no real farmland, forest or desert, so a natural-scene set was
+  captured afterwards — every image looked at BEFORE its contents were written down** (the lesson of the
+  campus mislabel): Kansas centre-pivot fields, Illinois crop fields, Olympic conifer forest, Moroccan
+  dunes, a Tahoe lake (all deep-blue water), Alpine rock and snow, an Outer Banks beach with coastal forest,
+  a Louisiana marsh. **There the vocabulary-gap concern IS real**: round one called the circular irrigated
+  fields "large circular storage tanks with green roofs", the crop fields "two tennis courts and a small
+  vehicle" and the forest "a body of water with a single ship" — three fluent, confident, wrong claims
+  (4 right / 1 partly / 3 wrong). Round two's detailed style: circular fields right ("circular fields with
+  varying shades of green… four distinct"), crop fields still "two tennis courts", forest still "a large body
+  of water… a small ship" (4 / 2 / 2); its brief style names the four green circular farmlands and the desert
+  ("full of yellow sand") but calls the lake "grass beside the beach" (2 / 5 / 1). **Over all 29 scenes:
+  round-one detailed 19 right / 7 partly / 3 wrong, round-two detailed 19 / 8 / 2, round-two brief 14 / 12 / 3**
+  — differences of one scene are noise, but round two fixes a mechanistic failure (circles → storage tanks) so
+  its detailed style is the installed default. The object scan is clean on all eight natural scenes
+  (nothing reported; a few weak single hits held back by the precision guard) — the captioner is the only
+  weak source, which is why the land-cover measurements matter: the composer trusts measured shares over
+  the caption. The un-tuned base model is still worse, but for a different reason than first
   stated (it invents landmarks that are not there — the Eiffel Tower for the Arc de Triomphe, the Tower of
   London for a tennis complex; it called the campus "a city", which was correct). **Round two**
   (`kaggle_finetune_caption_scene_mix.ipynb`, adds NWPU-Captions' one-sentence *brief* style): detailed
   style 15 / 6 / 0 (no better than round one; VRSBench CIDEr 0.300 → 0.244), brief style 12 / 7 / 2 — it
   names Wembley, Camp Nou and Hayward Field as *stadiums* (the detailed style says roundabout or track)
   but calls Hoover Dam "buildings beside storage tanks" and a power station "a palace" — a different
-  failure mode, not a better model, despite strong in-domain NWPU numbers. The installed default
-  (`caption_model/`) is round one; round two sits in `caption_model_r2/` (both styles, gitignored).
+  failure mode, not a better model, despite strong in-domain NWPU numbers. **The installed default
+  (`caption_model/`) is round two, used in its detailed style** (the brief style stays unused); round one is
+  kept beside it as `caption_model_r1/` (both gitignored).
   **End to end (real Groq composer):** Heathrow → "an airport with runways, taxiways… about 41 airplanes…
   the reliable detail is the count"; residential and freeway scenes → a street grid, houses, roads and an
   open field, hedged as "a likely but not certain impression". **What it still cannot do** (asked for by a
