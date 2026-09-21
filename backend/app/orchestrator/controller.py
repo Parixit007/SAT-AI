@@ -40,6 +40,27 @@ def _synthesize_answer(executed: list[tuple[ToolResult, dict, Optional[str]]]) -
     return " ".join(result.text_summary for result, _, _ in executed)
 
 
+def _redirect_calls(calls: list[ToolCall], registry: ToolRegistry) -> tuple[list[ToolCall], list[str]]:
+    """Swap calls a tool says it cannot answer (ToolSpec.redirect) for the tool that can -- e.g. "how many
+    buildings" picked for the object detector, which has no building class and returns a stray box or two on
+    a scene with dozens. Returns the new list and one note per swap for the trace. A swap is dropped if its
+    target is not registered, or if the target is already being called; calls that are not redirected are
+    never de-duplicated (asking the detector about two different objects is legitimate)."""
+    out: list[ToolCall] = []
+    notes: list[str] = []
+    for call in calls:
+        spec = registry.get(call.tool_name)
+        target = spec.redirect(call.arguments) if spec is not None and spec.redirect is not None else None
+        if target is not None and registry.get(target[0]) is not None:
+            name, arguments, reason = target
+            notes.append(reason)
+            if any(c.tool_name == name for c in calls) or any(c.tool_name == name for c in out):
+                continue
+            call = ToolCall(tool_name=name, arguments=arguments)
+        out.append(call)
+    return out, notes
+
+
 def _validation_failure(reason: str) -> QueryResult:
     trace = build_trace(
         selected_task="input_validation_failed",
@@ -96,12 +117,20 @@ def handle_query(
     input_summary = validation.summary_text()
     if query_input.location:
         input_summary += f"\nQuery location: ({query_input.location.lat:.5f}, {query_input.location.lon:.5f})"
+    # Every LLM selection goes through the redirect safety net (see _redirect_calls); a forced list is an
+    # explicit choice and is never rewritten. The notes are kept out of `warnings` on purpose: a warning
+    # lowers the reported confidence, and swapping in the right tool says nothing against the analysis.
+    redirect_notes: list[str] = []
+
+    def select(query: str) -> list[ToolCall]:
+        calls, notes = _redirect_calls(llm_provider.select_tools(query, tool_specs, input_summary), registry)
+        redirect_notes.extend(n for n in notes if n not in redirect_notes)
+        return calls
+
     # A caller can bypass the LLM's own tool choice entirely (e.g. the UI's manual "Advanced"
     # picker) by passing forced_tool_calls -- everything downstream (compatibility checks,
     # execution, trace, tool_results) treats it identically to an LLM-selected list.
-    tool_calls = forced_tool_calls if forced_tool_calls is not None else llm_provider.select_tools(
-        query_text, tool_specs, input_summary
-    )
+    tool_calls = forced_tool_calls if forced_tool_calls is not None else select(query_text)
 
     # Tool-calling is probabilistic, not deterministic -- an LLM can decline to call anything on a
     # borderline-phrased query and then call the right tool on an identical retry (confirmed live:
@@ -114,7 +143,7 @@ def handle_query(
             f"tool's description once more -- if the query is even loosely related to what a tool "
             f"does, call it rather than declining."
         )
-        tool_calls = llm_provider.select_tools(retry_query, tool_specs, input_summary)
+        tool_calls = select(retry_query)
 
     executed: list[tuple[ToolResult, dict, Optional[str]]] = []
     skip_warnings: list[str] = []
@@ -138,7 +167,7 @@ def handle_query(
                     f"{query_text}\n\nNote: the tool '{call.tool_name}' is not usable here "
                     f"({incompatible_reason}). Pick a different, compatible tool, or none."
                 )
-                retry_calls = llm_provider.select_tools(retry_query, tool_specs, input_summary)
+                retry_calls = select(retry_query)
                 # Keep the prefix already processed (successes and skips before index i) exactly as
                 # it is; only the still-unprocessed remainder gets replaced. Without this, resetting
                 # i to 0 over a brand-new full list let a tool that already ran successfully get
@@ -186,13 +215,13 @@ def handle_query(
     # Phrase the answer in plain language from what the tools found. Any failure keeps the
     # deterministic text above; a note about it goes in the trace, but only after the confidence was
     # computed -- a wording problem says nothing about how sure the analysis itself was.
-    trace_warnings = all_warnings
+    trace_warnings = all_warnings + redirect_notes
     if executed and settings.compose_answers:
         composed, composer_problem = compose_answer(llm_provider, query_text, executed, all_warnings, input_summary)
         if composed:
             answer_text = composed
         if composer_problem:
-            trace_warnings = all_warnings + [composer_problem]
+            trace_warnings = trace_warnings + [composer_problem]
 
     trace = build_trace(
         selected_task=selected_task,

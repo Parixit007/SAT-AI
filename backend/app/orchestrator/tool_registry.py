@@ -52,6 +52,11 @@ class ToolSpec:
     # pass compatible_modalities=["optical","sar"] even though the tool needs exactly one of each.
     # None (the default) means no such constraint -- every existing tool leaves this unset.
     required_modality_pair: Optional[tuple[str, str]] = None
+    # Optional safety net for a routing mistake that can be recognised deterministically: given the arguments the
+    # LLM chose for THIS tool, name the tool that should answer instead as (tool_name, arguments, reason), or None
+    # to leave the call alone. Applied to LLM-selected calls only -- never to the UI's manual picker, which is an
+    # explicit choice. The reason goes into the trace, so the substitution is auditable.
+    redirect: Optional[Callable[[dict[str, Any]], Optional[tuple[str, dict[str, Any], str]]]] = None
 
     def is_compatible(self, query_input: QueryInput, modalities: list[str]) -> Optional[str]:
         """Returns None if compatible, else a human-readable reason it isn't."""

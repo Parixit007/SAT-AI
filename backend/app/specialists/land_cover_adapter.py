@@ -114,7 +114,9 @@ def _handle(query_input: QueryInput, arguments: dict[str, Any]) -> ToolResult:
 TOOL_SPEC = ToolSpec(
     name="land_cover_analysis",
     description=(
-        "Measure what covers the ground in ONE optical image by labelling every pixel as building, road, tree, "
+        "THE tool for buildings, roads and vegetation in ONE optical image -- how many buildings, where they are "
+        "('highlight / show the buildings'), what colour the roofs are, how built-up or green the area is. It "
+        "measures what covers the ground by labelling every pixel as building, road, tree, "
         "water, agriculture land, rangeland (grass or scrub), developed space (paved lots, plazas, yards) or "
         "bareland. Returns each class's share of the image, an approximate count of distinct buildings (buildings "
         "that touch merge, so dense blocks are under-counted), the roof colours, and a colour-coded map. Use it for "

@@ -152,3 +152,37 @@ def test_other_queries_and_small_frames_are_not_tiled(street, image, monkeypatch
     result = adapter._handle(QueryInput(images=[image]), {"query": "vehicle"})  # a small-object query, but a 64 px frame
     assert detector.tile_sizes == [(64, 64)] and detector.queries[-1] == "cars"  # still asked the better way, just not tiled
     assert "tiles" not in result.structured_data
+
+
+# ---------------------------------------------------------------- what the detector cannot answer
+
+@pytest.mark.parametrize("query, target", [
+    ("building", "land_cover_analysis"),
+    ("how many buildings are there", "land_cover_analysis"),     # the user's real phrasing: 1 stray box on a campus of ~40
+    ("Highlight the houses", "land_cover_analysis"),
+    ("roads", "land_cover_analysis"),
+    ("trees. forest", "land_cover_analysis"),                    # several categories, all of them land cover
+    ("farmland", "land_cover_analysis"),
+    ("lake", "water_body_segmentation"),
+    ("the lake", "water_body_segmentation"),
+])
+def test_categories_the_detector_cannot_find_are_redirected(query, target):
+    name, arguments, reason = adapter.redirect_unanswerable_query({"query": query})
+    assert name == target and arguments == {}
+    assert "object detector" in reason and "instead" in reason
+
+
+@pytest.mark.parametrize("query", [
+    "airplane", "how many ships are there", "storage tank", "vehicle",
+    "airplane . building",                              # a mixed query keeps the detector for what it can find
+    "the large building next to the harbor entrance",   # a specific referring expression, not a category
+    "", "stadium",
+])
+def test_everything_else_stays_with_the_detector(query):
+    assert adapter.redirect_unanswerable_query({"query": query}) is None
+
+
+def test_the_tool_description_says_what_it_cannot_do_and_where_to_go():
+    text = adapter.TOOL_SPEC.description
+    assert "can NOT find buildings" in text and "land_cover_analysis" in text and "water_body_segmentation" in text
+    assert adapter.TOOL_SPEC.redirect is adapter.redirect_unanswerable_query

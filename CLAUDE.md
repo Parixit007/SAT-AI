@@ -198,6 +198,20 @@ copy that could drift from what's actually registered.
 (even to `[]`), `handle_query` runs exactly those tools instead of asking the LLM to choose. `None`
 (the default) is today's fully-automatic behavior, unchanged.
 
+**Redirect safety net** (`ToolSpec.redirect`, `controller._redirect_calls`, added 2026-09-21): a tool can name
+the tool that should answer instead when the LLM's arguments show a routing mistake that is recognisable
+deterministically. Found when a user's campus screenshot asked "how many buildings" and the router picked the
+object detector, which has no building class and drew ONE box (0.29) among dozens. `text_guided_grounding`
+now redirects queries whose every category is a land-cover one (building, house, roof, road, tree, forest,
+vegetation, farmland, ...) to `land_cover_analysis` and water ones to `water_body_segmentation`; a mixed query
+("airplane . building") stays with the detector. Applied to LLM-selected calls only — never to the manual picker,
+which is an explicit choice — and its note goes into the trace's warnings AFTER confidence is computed, because
+a warning lowers the reported confidence and swapping in the right tool says nothing against the analysis. The
+tool descriptions were sharpened too (the detector's said "THE tool for counting" and now says it can NOT find
+buildings, roads, vegetation, farmland or water; the land-cover tool's now opens "THE tool for buildings…"), which
+alone fixed the routing on the user's image ("how many buildings", "highlight the buildings", "show me the
+houses" all go to `land_cover_analysis`); the redirect is the net for when the LLM picks wrong anyway.
+
 **Failure handling — two different layers, deliberately:**
 - A **specialist failing** (uninstalled dependency, gated model with no token, upstream API
   refusing) is caught in `controller.py` around `spec.handler(...)` and recorded as a trace
@@ -914,7 +928,15 @@ Settings), checkpoints downloaded from the Output tab afterward.
   partly "developed space" and its small lake is missed, Hoover Dam's desert terrain is called rangeland,
   Drax's cooling towers are called water, the low-contrast Louisiana marsh is 99.5% water (ambiguous even by
   eye), and the hazy Iowa campus's tree canopy is called rangeland. Dense terraces merge into one outline, so
-  Brooklyn's 45 is well under the real number of houses.
+  Brooklyn's 45 is well under the real number of houses. **A user's own image showed the model's limit
+  (2026-09-21):** a campus screenshot (1426×1460, an oblique 3D-style web-map render with visible facades and
+  many grey / blue-grey roofs) came out as tree 39%, rangeland 26%, developed space 16%, agriculture 12%,
+  building 4% and ~57 building outlines — the red footprints are right where they appear (the big pale-roofed
+  blocks) but most grey-roofed blocks stay "developed space", so both the 4% and the 57 are unreliable there
+  (fragments inflate the count while missed roofs deflate the share). Upsampling ×1.5 raised the share to 6% and
+  the count to 79 fragments without fixing the miss, so no scale rule was added. The cause is domain: OpenEarthMap
+  labels nadir footprints; oblique renders and grey roofs are out of distribution. Straight-down imagery and
+  georeferenced captures behave much better.
 - **`kaggle_finetune_water_unet.ipynb`** — trains water-body segmentation from scratch (no prior
   notebook existed for this checkpoint) on the public "Satellite Images of Water Bodies" dataset
   (Kaggle, `franciscoescobar/satellite-images-of-water-bodies`, CC BY-NC-SA 4.0, 2841 image/mask

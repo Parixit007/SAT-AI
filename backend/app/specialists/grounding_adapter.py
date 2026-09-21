@@ -14,7 +14,7 @@ import re
 import tempfile
 import uuid
 from collections import Counter
-from typing import Any
+from typing import Any, Optional
 
 from app.concurrency import serialize_first_call
 from app.config import EVIDENCE_DIR, GROUNDING_CHECKPOINT, MODELS_DIR
@@ -151,6 +151,38 @@ def _ground_tiled(tool, image_path: str, query: str) -> tuple[list[dict[str, Any
     return merge_boxes(found), tiles
 
 
+# What the detector cannot answer. Its training sets (DOTA, DIOR, VRSBench) are OBJECT datasets with no building,
+# road or vegetation class, so asked for "building" it returns a stray box or two on a scene with dozens
+# (measured: 1 box on a campus of ~40 buildings, 1 on a Brooklyn block face, 0 for "house") -- a confident,
+# wrong-looking answer. The land-cover and water segmentation models answer these instead.
+LAND_COVER_CATEGORIES = {
+    "building", "house", "home", "roof", "rooftop", "road", "street", "highway",
+    "tree", "forest", "woodland", "vegetation", "greenery", "grass", "meadow", "field", "farmland", "crop", "cropland",
+}
+WATER_CATEGORIES = {"water", "lake", "river", "pond", "sea", "ocean", "reservoir", "water body"}
+
+
+def redirect_unanswerable_query(arguments: dict[str, Any]) -> Optional[tuple[str, dict[str, Any], str]]:
+    """ToolSpec.redirect for this tool: (tool, arguments, reason) when EVERY category asked about is one the
+    detector cannot find; None otherwise (a mixed query such as "airplane . building" stays with the detector)."""
+    parts = [p.strip() for p in normalize_category_query(str(arguments.get("query", ""))).split(" . ") if p.strip()]
+    if not parts:
+        return None
+    if all(p in LAND_COVER_CATEGORIES for p in parts):
+        return (
+            "land_cover_analysis", {},
+            f"The object detector has no '{parts[0]}' class (it was trained on object datasets), so the land-cover "
+            "model answered this instead.",
+        )
+    if all(p in WATER_CATEGORIES for p in parts):
+        return (
+            "water_body_segmentation", {},
+            f"The object detector cannot find '{parts[0]}' (it was trained on object datasets), so the "
+            "water-segmentation model answered this instead.",
+        )
+    return None
+
+
 @serialize_first_call
 def _get_tool():
     global _grounding_tool
@@ -231,7 +263,10 @@ TOOL_SPEC = ToolSpec(
         "returning a bounding box for every match. This is also THE tool for counting: use it for "
         "'how many airplanes/ships/vehicles/storage tanks...?' -- the number of boxes returned is "
         "the count, and the marked-up image is the evidence. Prefer it over visual_question_answering "
-        "for any counting or 'where is / show me / highlight' request."
+        "for any counting or 'where is / show me / highlight' request. It can NOT find buildings, houses, "
+        "roads, trees, vegetation, farmland or water bodies -- it was trained on object datasets with no such "
+        "classes and would return a stray box or two: use land_cover_analysis for buildings, roads, "
+        "vegetation and farmland, and water_body_segmentation for water."
     ),
     parameters_schema={
         "type": "object",
@@ -256,4 +291,5 @@ TOOL_SPEC = ToolSpec(
     compatible_modalities=["optical"],
     handler=_handle,
     checkpoint_id="dior_rsvg_finetuned.pth",
+    redirect=redirect_unanswerable_query,
 )
