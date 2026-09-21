@@ -3,9 +3,11 @@
 Two sources, each optional and independently failing:
 
   * a written description from the remote-sensing captioner (models/captioning/, SmolVLM-500M
-    fine-tuned on VRSBench captions) -- only when its checkpoint is installed, decided once at import
-    like change_detection's Stage 2. Fluent but a small model: it can be wrong about details and is
-    bad at counting, so it is presented as a general impression, never as the source of numbers.
+    fine-tuned on VRSBench captions) -- only when ENABLE_CAPTIONER is set AND its checkpoint is
+    installed, decided once at import like change_detection's Stage 2. Off by default: it is fluent but
+    a small model trained on object-centric (DOTA/DIOR) imagery, so it misreads natural land cover as
+    urban and is bad at counting -- when enabled it is presented as a general impression, never as the
+    source of numbers.
   * an object inventory from the grounding detector, restricted to the categories it has proven
     reliable on real aerial imagery (airplanes, ships, storage tanks). The other 21 categories the
     checkpoint was trained on were tried on 20 landmark scenes and are not trustworthy enough to
@@ -17,16 +19,20 @@ imagery a user is likely to upload -- the water model (58% "water" on an airport
 checkpoint ("rural" for Heathrow) -- so they are not folded in. A wrong confident sentence is worse
 than a short honest one."""
 
+import logging
 import uuid
 from collections import Counter
 from concurrent.futures import ThreadPoolExecutor
+from pathlib import Path
 from typing import Any
 
 from app.concurrency import serialize_first_call
-from app.config import CAPTION_CHECKPOINT_DIR, EVIDENCE_DIR, MODELS_DIR
+from app.config import CAPTION_CHECKPOINT_DIR, EVIDENCE_DIR, MODELS_DIR, settings
 from app.orchestrator.tool_registry import QueryInput, ToolResult, ToolSpec
 from app.specialists import grounding_adapter
 from app.specialists._loader import load_module
+
+logger = logging.getLogger(__name__)
 
 SCAN_CATEGORIES = ["airplane", "ship", "storage tank"]
 BOX_THRESHOLD = 0.30  # a little stricter than a single-category count: an inventory shouldn't invent objects
@@ -43,9 +49,18 @@ MIN_COUNT = 3
 MIN_BEST_SCORE = 0.35
 CONFIDENT_SINGLE = 0.55
 
-# Decided once at import (restart the backend after installing the checkpoint), so the description the
-# router LLM sees, the trace and the behaviour always agree -- same pattern as change_detection.
-USE_CAPTIONS = (CAPTION_CHECKPOINT_DIR / "caption_meta.json").exists()
+def captioner_available(enabled: bool, checkpoint_dir: Path) -> bool:
+    """The captioner is used only when switched on AND installed -- having the (gitignored) checkpoint on
+    disk must not by itself change what users are told about their imagery."""
+    return enabled and (checkpoint_dir / "caption_meta.json").exists()
+
+
+# Decided once at import (restart the backend after changing the setting or installing the checkpoint),
+# so the description the router LLM sees, the trace and the behaviour always agree -- same pattern as
+# change_detection.
+USE_CAPTIONS = captioner_available(settings.enable_captioner, CAPTION_CHECKPOINT_DIR)
+if settings.enable_captioner and not USE_CAPTIONS:
+    logger.warning("ENABLE_CAPTIONER is set but there is no checkpoint at %s; using the object scan only", CAPTION_CHECKPOINT_DIR)
 
 _captioner = None  # lazy singleton -- the model is ~1GB and only loads on the first description
 

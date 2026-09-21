@@ -26,7 +26,7 @@ backend/app/gis/        Esri map-area image capture (see the section below GEE)
 backend/tests/          pytest suite (mocked-LLM orchestrator tests, specialist smoke tests, API tests)
 frontend/               React + Vite + TS single-page app
 models/grounding/       GroundingTool (text-guided grounding, counting, category scan) -- working locally; vendor/ = gitignored Open-GroundingDino checkout
-models/captioning/      CaptionTool (SmolVLM-500M + VRSBench LoRA, scene descriptions) -- code done, checkpoint from Kaggle
+models/captioning/      CaptionTool (SmolVLM-500M + VRSBench LoRA, scene descriptions) -- trained + measured, OFF by default (ENABLE_CAPTIONER)
 models/water_segmentation/   WaterSegmentationTool (water-body mask) -- working
 models/vqa/             VQATool (PaliGemma RSVQA-LR VQA) -- working, live-verified
 models/change_detection/   ChangeDetectionTool (pixel-diff, Stage 1) + SemanticChangeTool (Siamese semantic-change net, Stage 2)
@@ -446,10 +446,13 @@ original React/Leaflet stack — `framer-motion`, see above.
   what is in this image". Two sources, each optional and failing independently (one failing leaves the
   other; both failing fails the tool), run in parallel threads (detector on CPU, captioner on MPS):
   **(1) a written description from the captioner** (`models/captioning/caption_tool.py`, below) — only
-  when its checkpoint is installed, decided once at import like change_detection's Stage 2
-  (`USE_CAPTIONS`; restart the backend after installing it; the router-facing tool description and
-  `checkpoint_id` follow the same flag; tests pin it off with an autouse fixture); presented as a
-  general impression that can be wrong about details and counts. **(2) an honest object inventory** —
+  when `ENABLE_CAPTIONER=true` (default **false**) AND its checkpoint is installed, decided once at import
+  like change_detection's Stage 2 (`USE_CAPTIONS = captioner_available(...)`; restart the backend after
+  changing either; the router-facing tool description and `checkpoint_id` follow the same flag; tests pin
+  it off with an autouse fixture); presented as a general impression that can be wrong about details and
+  counts. **Off by default even with the checkpoint installed, on purpose** — see the measurements in the
+  captioning entry below: having a gitignored file on disk must not by itself change what users are told
+  about their imagery. **(2) an honest object inventory** —
   `scan()` for airplane/ship/storage tank only (`box_threshold=0.30`), counted per category, with the
   categories it does NOT check stated in its own summary; **its counts are the numbers to believe**
   (the composer is told to trust them over the caption when they disagree). **A precision guard holds
@@ -462,7 +465,7 @@ original React/Leaflet stack — `framer-motion`, see above.
   since "nothing found" harms less than invented objects. Held-back detections stay in
   `structured_data["unreported"]` as an audit trail; a user's explicit "how many X?" (grounding) is
   not filtered. **What "describe this image" does today, honestly**: the router picks this ONE tool
-  (not several); with no captioner installed it is only this inventory, so it is useful for airports,
+  (not several); with the captioner off (the default) it is only this inventory, so it is useful for airports,
   ports and tank farms and says plainly that it can't describe anything else for farmland, a city or
   a stadium. The other 21 categories are
   excluded because they were measured unreliable (see grounding above), and the other two sources that
@@ -477,10 +480,44 @@ original React/Leaflet stack — `framer-motion`, see above.
   -> {"caption", "confidence"}`; confidence is the mean generated-token probability (how committed the
   model was, not whether the description is true), captions cut off by the token limit are trimmed to
   the last full sentence. Image splitting is OFF (a 512px image = 64 tokens; the default turns it into
-  1,088 and ~6 s). Checkpoint goes in gitignored `models/captioning/checkpoints/caption_model/`.
-  **Status: code and integration done and verified against a smoke-run checkpoint (8 training steps —
-  plumbing only, its captions are essentially the base model's); the real Kaggle run is in progress.**
-  Do not trust or ship it until the real checkpoint's captions have been read on real scenes.
+  1,088 and ~6 s). Checkpoint goes in gitignored `models/captioning/checkpoints/caption_model/`; if the
+  Kaggle Output-tab download of the 1GB `model.safetensors` stalls (it did, ~1 KB/s), rebuild it from the
+  117MB `caption_ckpt/best_trainable.pt` + `caption_meta.json` with `models/captioning/
+  rebuild_checkpoint.py` (needs the base model from the HF cache/Hub; refuses to write unless all 449
+  trained tensors line up; verified to reproduce the notebook's export — same file list and 1,019MB, and
+  byte-identical when re-run). Latency on the M4 (MPS, bfloat16): 1-2 s per image.
+  **Status: trained, integrated, measured — and deliberately OFF by default.** The held-out VRSBench
+  numbers are strong (see the notebook entry: BLEU-4 0.022 → 0.118, CIDEr 0.001 → 0.300, length 106 → 46
+  words), but the checkpoint was **read against 21 real Esri scenes whose contents I know** before
+  deciding, and that reading is mixed: about half right in gist (11 of 21: Heathrow and Boston Logan as
+  airports, Hoover Dam, a golf course, Golden Gate, a tank farm with ships, Singapore's and LA's
+  container ports, the Arc de Triomphe roundabout, Hayward Field's track, Drax as industrial), 7 partly
+  right with a key feature misnamed (stadiums called "ground track fields" or roundabouts, Manhattan reduced to harbours and
+  ships, a spurious "small ground track field" in Scottsdale and an LA interchange), and 3 wrong
+  (**Iowa farmland → "a dense urban area with a ground track field"**, the Flushing Meadows tennis
+  complex → an urban roundabout, an Altamont wind farm → "a winding river and small vehicles"). Counts
+  are wrong throughout ("two small planes" at Heathrow for ~50, "four storage tanks" for ~75). Its
+  confidence does not separate good from bad: the farmland caption scored 0.645, the highest of all 21,
+  while the 11 right ones ranged 0.52-0.63 and the 3 wrong ones 0.52-0.64. **Cause: a vocabulary gap,
+  not scale** — VRSBench captions are generated from DOTA/DIOR object annotations, so the model describes everything in those classes (ground track field,
+  roundabout, harbour, small vehicle, bridge) and has never seen farmland, forest or a wind farm as a
+  subject. Input scale was ruled out: farmland stayed "dense urban area" in all four variants (full → 512,
+  native centre crop, blurred, zoomed out), the wind farm stayed river/vehicles/bridges, though the model
+  is also unstable (the tennis complex became "an airport with two small planes" from a centre crop or a
+  blur). The un-tuned base model is worse (farmland → "a city", and it invents landmarks — the Eiffel
+  Tower for the Arc de Triomphe, the Tower of London for the tennis complex), so a general model is not a
+  safer fallback. **End to end with `ENABLE_CAPTIONER=true` (throwaway backend, real Groq composer):**
+  Heathrow → "an airport with runways, taxiways… the object detector found about 41 airplanes… the
+  reliable detail is the count" — exactly the answer the user asked for; farmland → led with "a dense
+  urban scene… a ground-track field", the composer's hedge ("may contain some inaccuracies") far too weak
+  for a wrong lead sentence. That is the case the off switch exists for. **To try it:** `ENABLE_CAPTIONER=
+  true` in `.env` and restart. **The real fix is data, not inference tricks:** a second run mixing in a
+  scene-level caption set that covers land cover (candidates, from memory and not yet checked for
+  availability or licence: RSICD, whose 30 scene classes include farmland, forest, desert and river, or
+  NWPU-Captions, whose 45 include wind farm and circular/rectangular farmland), likely with a second
+  short "brief scene" prompt beside VRSBench's detailed one, then rerun the same 21-scene reading; it
+  costs about two more hours of Kaggle GPU. Until then the description of a farm, forest or desert is
+  the honest "no airplanes, ships or tanks found".
 - All five image-based specialists (grounding, water segmentation, VQA, change detection, fusion)
   share one shape: a `*Tool` class with lazy imports + one inference method, plus a separate
   top-level `draw_*()` function for visualization.
@@ -860,7 +897,22 @@ Settings), checkpoints downloaded from the Output tab afterward.
   path buys: the same zips downloaded in 57 s and 43 s (146 and 93 MB/s via `hf_transfer`, against
   ~8 MB/s with `wget`), and a 21 s pre-flight. v3 makes the pre-flight also **pick the largest
   micro-batch that fits** (worst-case-length forward+backward per candidate, 15% memory headroom) and
-  accumulates gradients up to the effective batch of 32. **Results: _pending — fill in from the kernel log._**
+  accumulates gradients up to the effective batch of 32. **Real run, 2026-09-21 (kernel
+  `parixitsinghbalot/satquery-caption-vrsbench` v3, T4, ~108 min wall): pre-flight OK in 17 s; the batch
+  picker found micro-batch 32 and 16 both peak at 15.6 of 15.6GB, 8 fits at 10.1GB → 8 × 4 accumulation =
+  effective 32; 18,324 train / 300 val / 1,000 test captions (mean 50.0 words, max 142); 1,716 optimiser
+  steps (572 per epoch), 84.3 min training (~28 min per epoch), no non-finite steps; val loss 1.5988 →
+  1.5514 → 1.5448 (still improving at epoch 3, best kept). Test on 1,000 official eval images, zero-shot →
+  fine-tuned: BLEU-1 0.199 → 0.458, BLEU-2 0.096 → 0.288, BLEU-3 0.046 → 0.184, BLEU-4 0.022 → 0.118,
+  ROUGE-L 0.199 → 0.337, CIDEr 0.001 → 0.300, mean words 106.3 → 45.9 (references 45.9)** — the tuning
+  removed the chatty generic style and reproduced the reference length exactly. Export round-trip
+  (reload the saved artifact and caption a test image) passed on Kaggle. **Those numbers say the model
+  learned VRSBench; they do not say it describes arbitrary real scenes** — 3 of 21 real scenes came out
+  wrong and 7 partly wrong (see the captioning entry above), which is why it ships off. The test images'
+  scene ids are 0% shared with train (the dataset authors' own split). Downloading the outputs: the CLI's
+  `kernels output` reads the whole 1GB file in one non-resumable request and hung at ~1 KB/s, so fetch
+  the small files (`caption_ckpt/best_trainable.pt` 117MB, `caption_model/caption_meta.json`) with
+  `--file-pattern` and run `models/captioning/rebuild_checkpoint.py`.
 
 VRSBench coordinate gotcha (verified against the actual data before writing the v2 grounding
 notebook, documented in its own cell too): `[refer]` boxes in `VRSBench_train.json` are **0-100

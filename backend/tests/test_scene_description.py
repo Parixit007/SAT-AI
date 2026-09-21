@@ -35,6 +35,18 @@ def _det(label, score, i=0):
     return {"phrase": label, "bbox_xyxy": [i, i, i + 8.0, i + 8.0], "score": score}
 
 
+@pytest.mark.parametrize("enabled, installed, expected", [
+    (True, True, True),
+    (True, False, False),   # switched on but nothing to load: object scan only
+    (False, True, False),   # installed but not switched on: must NOT quietly change what users are told
+    (False, False, False),
+])
+def test_the_captioner_needs_both_the_switch_and_the_checkpoint(tmp_path, enabled, installed, expected):
+    if installed:
+        (tmp_path / "caption_meta.json").write_text("{}")
+    assert adapter.captioner_available(enabled, tmp_path) is expected
+
+
 def test_it_is_registered_as_a_single_image_tool():
     spec = DEFAULT_REGISTRY.get("scene_description")
     assert spec is not None and (spec.min_images, spec.max_images) == (1, 1) and not spec.requires_location
