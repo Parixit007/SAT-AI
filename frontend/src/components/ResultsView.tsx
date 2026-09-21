@@ -29,7 +29,9 @@ const CONFIDENCE_SEMANTICS: Record<string, string> = {
   text_guided_grounding:
     "The detector's own score for the best box. This checkpoint's scores run low even for correct boxes (real objects typically score 0.3-0.5), so a Low bucket here is not evidence the boxes are wrong -- check them against the overlay.",
   scene_description:
-    "The average of what its sources reported: the captioner's mean token probability (how committed it was, not whether the description is true) and the detector's best box score (which runs low even for correct boxes). The object scan only covers airplanes, ships and storage tanks.",
+    "The average of what its sources reported: the captioner's mean token probability (how committed it was, not whether the description is true), the land-cover model's mean pixel confidence, and the detector's best box score (which runs low even for correct boxes). The object scan only covers airplanes, ships and storage tanks.",
+  land_cover_analysis:
+    "The segmentation model's mean top-class probability over all pixels -- a model score, not a calibrated chance that each pixel label is right. Large classes (buildings, roads, trees, water) are more reliable than telling grass from farmland from paved ground; the building count under-counts dense blocks.",
   water_body_segmentation: "The segmentation model's own per-pixel confidence, averaged over the predicted mask.",
 };
 

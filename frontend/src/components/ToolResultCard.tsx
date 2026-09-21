@@ -165,11 +165,97 @@ function GroundingCard({ data, sourceImageUrl }: { data: Record<string, unknown>
   );
 }
 
+interface LandCoverFacts {
+  fractions: Record<string, number>;
+  building_count: number;
+  roof_colors: { name: string; share: number; rgb: [number, number, number] }[];
+}
+
+// Mirrors PALETTE in models/landcover/landcover_tool.py so the legend matches the overlay image -- keep in step.
+const LAND_COVER_COLOR: Record<string, string> = {
+  bareland: "rgb(140,110,90)",
+  rangeland: "rgb(170,230,110)",
+  "developed space": "rgb(160,160,160)",
+  road: "rgb(255,235,0)",
+  tree: "rgb(0,110,40)",
+  water: "rgb(0,120,255)",
+  "agriculture land": "rgb(255,150,0)",
+  building: "rgb(230,0,0)",
+};
+
+function LandCoverPanel({ facts }: { facts: LandCoverFacts }) {
+  const shown = Object.entries(facts.fractions ?? {})
+    .filter(([, share]) => share >= 0.01)
+    .sort((a, b) => b[1] - a[1]);
+  const roofs = (facts.roof_colors ?? []).filter((c) => c.share >= 0.05).slice(0, 4);
+  const buildings = facts.fractions?.building ?? 0;
+  return (
+    <div className="lc-panel">
+      <div className="lc-stack" role="img" aria-label="Land-cover shares of the image">
+        {shown.map(([name, share]) => (
+          <div
+            key={name}
+            className="lc-stack-seg"
+            style={{ width: `${share * 100}%`, background: LAND_COVER_COLOR[name] ?? "var(--border-strong)" }}
+            title={`${name} ${(share * 100).toFixed(0)}%`}
+          />
+        ))}
+      </div>
+      <ul className="lc-legend">
+        {shown.map(([name, share]) => (
+          <li key={name}>
+            <span className="lc-swatch" style={{ background: LAND_COVER_COLOR[name] ?? "var(--border-strong)" }} />
+            {name} <span className="data-value">{(share * 100).toFixed(0)}%</span>
+          </li>
+        ))}
+      </ul>
+      <p className="lc-facts">
+        {facts.building_count > 0 ? (
+          <>
+            about <span className="detection-headline-count data-value">{facts.building_count}</span> separate building outlines
+          </>
+        ) : buildings >= 0.005 ? (
+          "Buildings are present, but no separate outlines could be told apart"
+        ) : (
+          "No buildings found"
+        )}
+        <span className="lc-fine"> &middot; buildings that touch merge into one, so dense blocks are under-counted</span>
+      </p>
+      {roofs.length > 0 && buildings >= 0.01 && (
+        <div className="lc-roofs">
+          <span className="lc-roofs-label">Roofs</span>
+          {roofs.map((c) => (
+            <span key={c.name} className="detection-chip" style={{ borderColor: "var(--border-strong)" }}>
+              <span className="lc-swatch" style={{ background: `rgb(${c.rgb.join(",")})` }} />
+              {c.name} <span className="data-value">{(c.share * 100).toFixed(0)}%</span>
+            </span>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function LandCoverCard({ data, evidenceUrl }: { data: Record<string, unknown>; evidenceUrl: string | null }) {
+  return (
+    <div className="tool-card-body">
+      <LandCoverPanel facts={data as unknown as LandCoverFacts} />
+      {evidenceUrl && <EvidenceImage url={evidenceUrl} wide />}
+      <p className="tool-card-note">
+        A segmentation model labels every pixel, so the shares are approximate &mdash; most reliable for buildings,
+        roads, trees and water, weaker at telling grass from farmland from paved ground. Roof colours are read from
+        the image; shadows can look like dark roofs.
+      </p>
+    </div>
+  );
+}
+
 function SceneDescriptionCard({ data, sourceImageUrl }: { data: Record<string, unknown>; sourceImageUrl: string | null }) {
   const detections = (data.detections ?? []) as Detection[];
   const scanned = ((data.scanned_categories ?? []) as string[]).join(", ");
   const caption = typeof data.caption === "string" && data.caption ? data.caption : null;
   const notes = (data.notes ?? []) as string[];
+  const land = (data.land_cover ?? null) as LandCoverFacts | null;
   return (
     <div className="tool-card-body">
       {caption && (
@@ -180,6 +266,7 @@ function SceneDescriptionCard({ data, sourceImageUrl }: { data: Record<string, u
           <blockquote>{caption}</blockquote>
         </figure>
       )}
+      {land && <LandCoverPanel facts={land} />}
       <p className="detection-headline">
         <span className="detection-headline-count data-value">{detections.length}</span>
         {detections.length === 1 ? " object found" : " objects found"}
@@ -383,6 +470,9 @@ export function ToolResultCard({ result }: { result: ToolResultOut }) {
       break;
     case "visual_question_answering":
       body = <VqaCard data={data} />;
+      break;
+    case "land_cover_analysis":
+      body = <LandCoverCard data={data} evidenceUrl={result.evidence_image_url} />;
       break;
     default:
       body = <FallbackCard result={result} />;

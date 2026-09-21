@@ -28,6 +28,7 @@ frontend/               React + Vite + TS single-page app
 models/grounding/       GroundingTool (text-guided grounding, counting, category scan) -- working locally; vendor/ = gitignored Open-GroundingDino checkout
 models/captioning/      CaptionTool (SmolVLM-500M + VRSBench LoRA, scene descriptions) -- trained + measured, ON when its checkpoint is installed (ENABLE_CAPTIONER)
 models/water_segmentation/   WaterSegmentationTool (water-body mask) -- working
+models/landcover/       LandCoverTool (OpenEarthMap U-Net: building/road/tree/water shares, building count, roof colours) -- checkpoint from Kaggle
 models/vqa/             VQATool (PaliGemma RSVQA-LR VQA) -- working, live-verified
 models/change_detection/   ChangeDetectionTool (pixel-diff, Stage 1) + SemanticChangeTool (Siamese semantic-change net, Stage 2)
 models/fusion/          FusionTool (SAR-backscatter water/built-up, Stage 1) -- working
@@ -187,7 +188,7 @@ static mount alongside the existing `/evidence` one). Building this in `routes_q
 additive alongside the existing flat `evidence_image_urls` — nothing was removed from the response
 shape, so nothing that read it before breaks.
 
-**`GET /api/tools`** (`api/routes_tools.py`) — registry metadata for all 8 specialists
+**`GET /api/tools`** (`api/routes_tools.py`) — registry metadata for all 9 specialists
 (`ToolSpecOut`: name/description/`parameters_schema`/image+location requirements/checkpoint id),
 served straight from `DEFAULT_REGISTRY.list_specs()`. Exists so the frontend's capabilities gallery
 and its manual tool-override picker both read from the live registry instead of a hand-maintained
@@ -442,6 +443,38 @@ original React/Leaflet stack — `framer-motion`, see above.
   water — and 10% for an urban Wembley scene. Not a fix, a known blind spot; it is why the answer
   composer is told this tool can over-report on bright grey surfaces, and why it is not part of
   `scene_description`.
+- **`land_cover_analysis`** (`models/landcover/landcover_tool.py` + `backend/app/specialists/land_cover_adapter.py`)
+  — added 2026-09-21 after a user uploaded a street scene and got back only "no airplanes, ships or storage
+  tanks found", then asked why the app reported no roads, cars, buildings, building colour or building count.
+  The honest answer had two parts: the object detector has no such classes (DOTA / DIOR / VRSBench are
+  *object* datasets — nothing for buildings, roads or vegetation) and the inventory had been restricted to the
+  three categories that measured reliable; and no other model in the app looks at buildings at all. This tool
+  is a U-Net (ResNet34 encoder) trained on **OpenEarthMap** (8 classes: bareland, rangeland, developed space,
+  road, tree, water, agriculture land, building; 0.25-0.5 m/px, 75+ regions) that labels every pixel and
+  derives what was asked for — **each class's share of the image, an approximate building count, and the roof
+  colours**. The pure pieces are unit-tested without a checkpoint: `class_fractions`, `count_components`
+  (8-connected building regions of ≥30 px — *touching buildings merge, so dense blocks are under-counted*, said
+  in the text and to the phrasing model), `color_name_indices`/`roof_colors` (simple HSV rules → plain names
+  such as white / grey / red / brown / tan, per-pixel shares inside the building mask eroded by one pixel;
+  *shadows can read as dark roofs*), tile arithmetic (whole image up to 1536 px, else overlapping 768 px tiles
+  with averaged probabilities). Runs on **CPU** by default (the captioner owns the GPU and two MPS users in
+  parallel are not safe). `land_cover_adapter.analyze()` returns JSON-able facts (`fractions`, `dominant`,
+  `building_count`, `roof_colors`, `confidence` = mean top-class probability — a model score) and
+  `summarize()` writes the plain-language sentence; `_handle` adds a colour-coded overlay image with a legend.
+  **It is also the third source inside `scene_description`** (`ENABLE_LANDCOVER`, default true, used only when
+  `models/landcover/checkpoints/landcover_unet.pt` exists, decided at import like the captioner; failures are
+  isolated like the other sources), so "describe this image" now says how much is buildings / roads / trees /
+  water; the composer labels each source by what actually ran (`_scene_label`) and its prompt now says building
+  counts are approximate and land-cover shares beat the caption when they disagree. The UI has a
+  `LandCoverPanel` (stacked share bar, legend, building count, roof-colour chips) used by a dedicated card
+  (with the overlay) and inside the scene-description card. **What it does not do: count cars** — measured on
+  three real zoomed street scenes (~0.2 m/px): the detector, prompted "car" and run on overlapping native-
+  resolution tiles, finds a lower bound (Brooklyn rows 19 boxes at full frame → 81 tiled; suburb 26 → 45;
+  a parking lot with ~80 cars 7 → 14, still 44 at 256 px tiles and a 0.22 threshold, only 11 of them in the
+  dense lot) — good on streets, poor in packed lots, and it cannot detect buildings at all (prompting "house"
+  boxed a few real roofs, the bus and empty road). Not wired into the app: cars need ≲0.3 m/px, and a "0
+  found" would be indistinguishable from "too coarse to see". **Training: `notebooks/kaggle_finetune_
+  landcover_openearthmap.ipynb` (see the notebooks section); status: run in progress — results below when in.**
 - **`scene_description`** (`backend/app/specialists/scene_description_adapter.py`) — "describe/explain/
   what is in this image". Two sources, each optional and failing independently (one failing leaves the
   other; both failing fails the tool), run in parallel threads (detector on CPU, captioner on MPS):
@@ -815,6 +848,28 @@ Settings), checkpoints downloaded from the Output tab afterward.
   entry above in Specialist models for the full list) plus one unrelated Google Drive rate-limit
   that just needed a retry after some time passed — v3 won on all three metrics and replaced v1 as
   the live checkpoint.
+- **`kaggle_finetune_landcover_openearthmap.ipynb`** — trains the land-cover segmenter for `land_cover_analysis`
+  on **OpenEarthMap** via the Kaggle copy `aletbm/global-land-cover-mapping-openearthmap` (attached as a notebook
+  input — no download step; CC BY-NC-SA 4.0, research use): 2,303 train + 384 val 1024×1024 RGB tiles
+  (`images/{train,val,test}` and `label/{train,val}`, no test labels), a U-Net with an ImageNet ResNet34
+  encoder, cross-entropy + 0.5·Dice, AdamW with the encoder at ⅓ LR, fp16, 24 epochs of 2 random crops per tile.
+  **Facts checked before writing it:** the layout (listed through the Kaggle API); the **label encoding** —
+  0 = unlabelled (ignored), 1 bareland, 2 rangeland, 3 developed space, 4 road, 5 tree, 6 water,
+  7 agriculture land, 8 building — verified by *rendering label overlays on eight real tiles and looking at
+  them* (roofs of a dense Peruvian neighbourhood are exactly class 8, streets 4, paved lots 3, an island's sea
+  6), the lesson of the captioner's mislabelled test scene; class shares on the sample (building 18.9%,
+  tree 25.6%, developed 17.6%, rangeland 15.6%, agriculture 10.1%, road 6.0%, water 5.3%, bareland 0.5% — hence
+  the Dice term). Training crops are a random 256-1000 px window (log-uniform) resized to 512, because the
+  data is 0.25-0.5 m/px while a zoomed street view is ~0.2 m and a 1.4 km capture ~1.4 m, plus flips,
+  rot90 and a mild colour jitter only (roof colour is a reported output). Evaluation reports per-class IoU,
+  **area-fraction error** (percentage points), **building-count error** (predicted vs true connected
+  components, the same `count_components` rule the tool uses) and the score at **half scale**; a pre-flight
+  runs the train/save/reload path first and a batch picker chooses the largest batch that fits. **Verified
+  locally before pushing** by running every cell end to end on eight real image/label pairs
+  (`LC_SMOKE_TEST`/`LC_DATA_ROOT`). Pushed as kernel `parixitsinghbalot/satquery-landcover-oem` v1,
+  2026-09-21. Checkpoint install: download `lc_out/landcover_unet.pt` (~98MB, small enough for the CLI) into
+  `models/landcover/checkpoints/` (gitignored) and restart the backend. **Results: _pending — fill in from the
+  kernel log._**
 - **`kaggle_finetune_water_unet.ipynb`** — trains water-body segmentation from scratch (no prior
   notebook existed for this checkpoint) on the public "Satellite Images of Water Bodies" dataset
   (Kaggle, `franciscoescobar/satellite-images-of-water-bodies`, CC BY-NC-SA 4.0, 2841 image/mask

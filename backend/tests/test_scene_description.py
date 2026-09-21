@@ -22,6 +22,7 @@ def no_captions_unless_asked(monkeypatch):
     """USE_CAPTIONS is decided at import by whether a gitignored checkpoint exists, so it differs
     between machines -- pin it off here and let the caption tests opt in via `with_captions`."""
     monkeypatch.setattr(adapter, "USE_CAPTIONS", False)
+    monkeypatch.setattr(adapter, "USE_LANDCOVER", False)
 
 
 @pytest.fixture
@@ -181,3 +182,81 @@ def test_the_captioner_is_not_touched_when_no_checkpoint_is_installed(image, mon
 
     assert captioner.calls == 0 and result.structured_data["caption"] is None
     assert "Description" not in result.text_summary
+
+
+# ---------------------------------------------------------------- the land-cover source
+
+LAND_FACTS = {
+    "fractions": {"bareland": 0.0, "rangeland": 0.05, "developed space": 0.15, "road": 0.18, "tree": 0.22,
+                  "water": 0.0, "agriculture land": 0.0, "building": 0.40},
+    "dominant": "building", "building_count": 62,
+    "roof_colors": [{"name": "white", "share": 0.6, "rgb": [231, 228, 222]}, {"name": "grey", "share": 0.3, "rgb": [120, 120, 120]}],
+    "confidence": 0.8, "image_size": [1024, 1024],
+}
+
+
+@pytest.fixture
+def with_landcover(monkeypatch):
+    monkeypatch.setattr(adapter, "USE_LANDCOVER", True)
+
+
+def test_land_cover_is_reported_next_to_the_object_scan(image, monkeypatch, with_landcover):
+    monkeypatch.setattr(adapter.land_cover_adapter, "analyze", lambda path: (LAND_FACTS, None))
+    monkeypatch.setattr(grounding_adapter, "_get_tool", lambda: StubScanner([_det("ship", 0.5, i) for i in range(3)]))
+
+    result = adapter._handle(QueryInput(images=[image]), {})
+
+    assert result.structured_data["land_cover"] == LAND_FACTS
+    assert "building 40%" in result.text_summary and "About 62 separate building outlines" in result.text_summary
+    assert "Roofs are mostly white (60%) and grey (30%)" in result.text_summary
+    assert "found 3 ship(s)" in result.text_summary
+    assert result.confidence == pytest.approx((0.8 + 0.5) / 2)
+
+
+def test_all_three_sources_can_speak_at_once(image, monkeypatch, with_captions, with_landcover):
+    monkeypatch.setattr(adapter, "_get_captioner", lambda: StubCaptioner(confidence=0.6))
+    monkeypatch.setattr(adapter.land_cover_adapter, "analyze", lambda path: (LAND_FACTS, None))
+    monkeypatch.setattr(grounding_adapter, "_get_tool", lambda: StubScanner([_det("airplane", 0.5, i) for i in range(3)]))
+
+    result = adapter._handle(QueryInput(images=[image]), {})
+
+    assert result.structured_data["caption"] and result.structured_data["land_cover"] and result.structured_data["total_objects"] == 3
+    assert result.confidence == pytest.approx((0.6 + 0.8 + 0.5) / 3)
+    assert result.text_summary.index("Description") < result.text_summary.index("Land cover") < result.text_summary.index("Object scan")
+
+
+def test_a_failing_land_cover_model_leaves_the_rest(image, monkeypatch, with_landcover):
+    def broken(path):
+        raise RuntimeError("no checkpoint")
+
+    monkeypatch.setattr(adapter.land_cover_adapter, "analyze", broken)
+    monkeypatch.setattr(grounding_adapter, "_get_tool", lambda: StubScanner([_det("ship", 0.4, i) for i in range(3)]))
+
+    result = adapter._handle(QueryInput(images=[image]), {})
+
+    assert result.structured_data["land_cover"] is None and result.structured_data["total_objects"] == 3
+    assert "land-cover model unavailable (no checkpoint)" in result.text_summary
+
+
+def test_land_cover_alone_still_makes_a_description_when_the_scan_fails(image, monkeypatch, with_landcover):
+    class BrokenScanner:
+        def scan(self, *args, **kwargs):
+            raise RuntimeError("groundingdino missing")
+
+    monkeypatch.setattr(adapter.land_cover_adapter, "analyze", lambda path: (LAND_FACTS, None))
+    monkeypatch.setattr(grounding_adapter, "_get_tool", lambda: BrokenScanner())
+
+    result = adapter._handle(QueryInput(images=[image]), {})
+
+    assert result.structured_data["land_cover"] and result.confidence == pytest.approx(0.8)
+
+
+def test_the_router_description_says_what_is_actually_enabled(monkeypatch):
+    monkeypatch.setattr(adapter, "USE_CAPTIONS", False)
+    monkeypatch.setattr(adapter, "USE_LANDCOVER", False)
+    assert "does NOT describe terrain, buildings" in adapter._what_it_returns()
+    monkeypatch.setattr(adapter, "USE_LANDCOVER", True)
+    text = adapter._what_it_returns()
+    assert "building count" in text and "roof colours" in text and "does NOT" not in text and "captioning" not in text
+    monkeypatch.setattr(adapter, "USE_CAPTIONS", True)
+    assert "captioning model" in adapter._what_it_returns() and "segmentation model" in adapter._what_it_returns()

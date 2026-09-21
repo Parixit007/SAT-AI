@@ -15,6 +15,7 @@ export const TOOL_ICON: Record<string, string> = {
   change_detection: "🔀",
   water_body_segmentation: "🌊",
   visual_question_answering: "❓",
+  land_cover_analysis: "🏘️",
 };
 
 export const TOOL_LABEL: Record<string, string> = {
@@ -26,6 +27,7 @@ export const TOOL_LABEL: Record<string, string> = {
   change_detection: "Change detection",
   water_body_segmentation: "Water segmentation",
   visual_question_answering: "Visual Q&A",
+  land_cover_analysis: "Land cover & buildings",
 };
 
 // From problem_statement.txt's "Representative Queries", plus one each for groundwater/wildfire --
@@ -39,4 +41,5 @@ export const EXAMPLE_PROMPT: Record<string, string> = {
   optical_sar_fusion: "Use the optical and SAR images together to identify built-up and water-covered regions.",
   text_guided_grounding: "How many airplanes are in this image?",
   wildfire_detection: "Is there any active wildfire near this location?",
+  land_cover_analysis: "How much of this area is buildings, roads and vegetation, and how many buildings are there?",
 };

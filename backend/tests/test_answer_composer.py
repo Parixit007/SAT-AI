@@ -175,3 +175,29 @@ def test_detections_the_precision_guard_held_back_never_reach_the_phrasing_model
                             {"caption": None, "objects": [],
                              "unreported": [{"label": "held-back-marker", "count": 2, "best_score": 0.39}]}, None, 0.0), {}, "ckpt")]
     assert "held-back-marker" not in composer.build_evidence(executed, [])
+
+
+def _scene(caption=None, land=None):
+    return [(ToolResult("scene_description", "summary", {"caption": caption, "land_cover": land, "objects": []}, None, 0.5), {}, "ckpt")]
+
+
+def test_land_cover_without_a_caption_is_described_as_a_segmentation_not_a_captioner():
+    block = composer.build_evidence(_scene(land={"fractions": {"building": 0.34}, "building_count": 62}), [])
+    assert "segmentation model" in block and "under-counts dense blocks" in block
+    assert "captioning" not in block and "no fuller description" not in block
+
+
+def test_a_caption_and_land_cover_are_both_named_when_both_are_present():
+    block = composer.build_evidence(_scene(caption="An airport.", land={"fractions": {"road": 0.2}, "building_count": 3}), [])
+    assert "captioning model" in block and "segmentation model" in block and "object scan" in block
+
+
+def test_the_land_cover_tool_has_its_own_plain_name_and_caveats():
+    executed = [(ToolResult("land_cover_analysis", "Land cover: building 34%.", {"building_count": 62}, None, 0.8), {}, "ckpt")]
+    block = composer.build_evidence(executed, [])
+    assert "land-cover analysis" in block and "land_cover_analysis" not in block
+
+
+def test_the_prompt_tells_the_model_to_hedge_building_counts_and_trust_measurements():
+    assert "buildings that touch merge" in composer.SYSTEM_PROMPT
+    assert "trust the detector's counts" in composer.SYSTEM_PROMPT and "land-cover shares" in composer.SYSTEM_PROMPT

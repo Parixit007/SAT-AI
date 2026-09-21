@@ -16,6 +16,7 @@ GROUNDING_CHECKPOINT = MODELS_DIR / "grounding" / "checkpoints" / "dior_rsvg_fin
 WATER_SEG_CHECKPOINT = MODELS_DIR / "water_segmentation" / "checkpoints" / "water_body_unet_final.pt"
 CHANGE_SEG_CHECKPOINT = MODELS_DIR / "change_detection" / "checkpoints" / "semantic_change_unet.pt"
 CAPTION_CHECKPOINT_DIR = MODELS_DIR / "captioning" / "checkpoints" / "caption_model"
+LANDCOVER_CHECKPOINT = MODELS_DIR / "landcover" / "checkpoints" / "landcover_unet.pt"
 
 
 class Settings(BaseSettings):
@@ -47,6 +48,11 @@ class Settings(BaseSettings):
     # for 6, wrong for none -- but its counts are unreliable, so the answer composer treats it as an
     # impression and trusts the detector's numbers.
     enable_captioner: bool = True
+
+    # Use the land-cover segmenter (models/landcover/) inside scene_description whenever its checkpoint is
+    # installed: shares of buildings / roads / trees / water, an approximate building count, roof colours.
+    # Set false to leave them out of "describe this image" (the land_cover_analysis tool is unaffected).
+    enable_landcover: bool = True
 
     api_host: str = "127.0.0.1"
     api_port: int = 8000

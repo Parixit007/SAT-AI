@@ -37,10 +37,11 @@ SYSTEM_PROMPT = (
     "address the question, say what it does and doesn't tell us instead of dressing it up. If a tool "
     "failed, say which analysis was unavailable and what that means for the answer. Objects the "
     "detector did not report are not proof they are absent.\n"
-    "4. Detector counts are what it found, not a guarantee: say 'about' or 'at least', and note that "
-    "some may be missed. When a generated scene description and the detector disagree about what is "
-    "there or how many, trust the detector's counts and present the description as a general "
-    "impression rather than fact.\n"
+    "4. Detector counts and building counts are what the models found, not guarantees: say 'about' or "
+    "'at least' (buildings that touch merge into one, so dense blocks are under-counted), and note that "
+    "some may be missed. When a generated scene description and the measurements disagree about what is "
+    "there or how many, trust the detector's counts and the measured land-cover shares and present the "
+    "description as a general impression rather than fact.\n"
     "5. Confidence values are the tools' own scores, not probabilities of being right. Don't quote them "
     "as numbers; use words (0.75+ fairly confident, 0.5-0.75 moderately, under 0.5 not very confident). "
     "Give fractions as percentages (0.58 -> 58%), not raw decimals.\n"
@@ -58,7 +59,8 @@ FRIENDLY_NAMES = {
     "optical_sar_fusion": "optical + SAR fusion analysis",
     "groundwater_potential": "groundwater-potential estimate (GIS layer overlay, not a trained model)",
     "wildfire_detection": "satellite fire-detection lookup (NASA FIRMS)",
-    "scene_description": "scene description (a written description from a small remote-sensing captioning model when one is installed -- fluent, but it can be wrong about details and cannot count reliably -- plus an object scan by the detector, limited to airplanes, ships and storage tanks; the scan's counts are the reliable numbers, and its scores run low even for correct boxes, 0.3-0.5 is normal)",
+    "scene_description": "scene description (a written description from a small remote-sensing captioning model when one is installed -- fluent, but it can be wrong about details and cannot count reliably -- and land cover measured by a segmentation model when present, plus an object scan by the detector, limited to airplanes, ships and storage tanks; the scan's counts are the reliable numbers, and its scores run low even for correct boxes, 0.3-0.5 is normal)",
+    "land_cover_analysis": "land-cover analysis (a segmentation model: the shares of buildings, roads, trees, water and so on are fairly reliable for the large classes and weaker at telling grass from farmland from paved ground; the building count under-counts dense blocks because touching buildings merge; roof colours are read from the pixels and shadows can look like dark roofs)",
 }
 
 # scene_description with no caption (no captioner installed, or it failed): don't let the label suggest
@@ -75,6 +77,28 @@ _SCENE_SCAN_ONLY = (
 # object), and given the raw list the model wrote "it flagged one possible storage-tank-like feature with
 # low confidence" -- exactly what the guard exists to keep out of the answer.
 _AUDIT_ONLY = {"scene_description": {"unreported"}}
+
+_CAPTION_NOTE = "a written description from a small remote-sensing captioning model -- fluent, but it can be wrong about details and cannot count reliably"
+_LAND_NOTE = (
+    "land cover measured by a segmentation model -- the shares of buildings, roads, trees, water and so on are fairly "
+    "reliable for the large classes and weaker at telling grass from farmland from paved ground; the building count "
+    "under-counts dense blocks because touching buildings merge; roof colours are read from the pixels and shadows can "
+    "look like dark roofs"
+)
+_SCAN_NOTE = (
+    "an object scan by the detector, limited to airplanes, ships and storage tanks; its counts are the reliable "
+    "numbers there, and its scores run low even for correct boxes, 0.3-0.5 is normal"
+)
+
+
+def _scene_label(data: dict) -> str:
+    """scene_description is up to three sources; name only the ones that actually produced something, so the
+    phrasing model is never told about a captioner or a segmenter that was not there."""
+    caption, land = bool(data.get("caption")), bool(data.get("land_cover"))
+    if not caption and not land:
+        return _SCENE_SCAN_ONLY
+    return "scene description (" + "; plus ".join(([_CAPTION_NOTE] if caption else []) + ([_LAND_NOTE] if land else []) + [_SCAN_NOTE]) + ")"
+
 
 _MAX_LIST = 8
 _MAX_EVIDENCE_CHARS = 1800
@@ -107,8 +131,8 @@ def build_evidence(executed: list[tuple[ToolResult, dict, Optional[str]]], warni
     blocks = []
     for i, (result, _arguments, _checkpoint) in enumerate(executed, start=1):
         label = FRIENDLY_NAMES.get(result.tool_name, result.tool_name)
-        if result.tool_name == "scene_description" and not result.structured_data.get("caption"):
-            label = _SCENE_SCAN_ONLY
+        if result.tool_name == "scene_description":
+            label = _scene_label(result.structured_data)
         shown = {k: v for k, v in result.structured_data.items() if k not in _AUDIT_ONLY.get(result.tool_name, ())}
         details = json.dumps(_compact(shown), ensure_ascii=False, default=str)
         if len(details) > _MAX_EVIDENCE_CHARS:
