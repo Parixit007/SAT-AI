@@ -3,11 +3,11 @@
 Two sources, each optional and independently failing:
 
   * a written description from the remote-sensing captioner (models/captioning/, SmolVLM-500M
-    fine-tuned on VRSBench captions) -- only when ENABLE_CAPTIONER is set AND its checkpoint is
-    installed, decided once at import like change_detection's Stage 2. Off by default: it is fluent but
-    a small model trained on object-centric (DOTA/DIOR) imagery, so it misreads natural land cover as
-    urban and is bad at counting -- when enabled it is presented as a general impression, never as the
-    source of numbers.
+    fine-tuned on VRSBench captions) -- used when ENABLE_CAPTIONER is true (the default) AND its
+    checkpoint is installed, decided once at import like change_detection's Stage 2. It is fluent and
+    covers what the detector cannot (roads, buildings, vegetation, roof colours) but it is a small model
+    trained on object-centric (DOTA/DIOR) captions and is bad at counting -- so it is presented as a
+    general impression, never as the source of numbers.
   * an object inventory from the grounding detector, restricted to the categories it has proven
     reliable on real aerial imagery (airplanes, ships, storage tanks). The other 21 categories the
     checkpoint was trained on were tried on 20 landmark scenes and are not trustworthy enough to
@@ -60,7 +60,7 @@ def captioner_available(enabled: bool, checkpoint_dir: Path) -> bool:
 # change_detection.
 USE_CAPTIONS = captioner_available(settings.enable_captioner, CAPTION_CHECKPOINT_DIR)
 if settings.enable_captioner and not USE_CAPTIONS:
-    logger.warning("ENABLE_CAPTIONER is set but there is no checkpoint at %s; using the object scan only", CAPTION_CHECKPOINT_DIR)
+    logger.info("no captioner checkpoint at %s; scene_description will use the object scan only", CAPTION_CHECKPOINT_DIR)
 
 _captioner = None  # lazy singleton -- the model is ~1GB and only loads on the first description
 

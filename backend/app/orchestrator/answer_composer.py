@@ -70,6 +70,12 @@ _SCENE_SCAN_ONLY = (
     "its scores run low even for correct boxes, 0.3-0.5 is normal)"
 )
 
+# Kept in the trace as an audit trail but never shown to the phrasing model: the scene inventory's precision
+# guard holds back weak lone/paired detections on purpose ("nothing found" harms less than an invented
+# object), and given the raw list the model wrote "it flagged one possible storage-tank-like feature with
+# low confidence" -- exactly what the guard exists to keep out of the answer.
+_AUDIT_ONLY = {"scene_description": {"unreported"}}
+
 _MAX_LIST = 8
 _MAX_EVIDENCE_CHARS = 1800
 _MAX_ANSWER_CHARS = 3000
@@ -103,7 +109,8 @@ def build_evidence(executed: list[tuple[ToolResult, dict, Optional[str]]], warni
         label = FRIENDLY_NAMES.get(result.tool_name, result.tool_name)
         if result.tool_name == "scene_description" and not result.structured_data.get("caption"):
             label = _SCENE_SCAN_ONLY
-        details = json.dumps(_compact(result.structured_data), ensure_ascii=False, default=str)
+        shown = {k: v for k, v in result.structured_data.items() if k not in _AUDIT_ONLY.get(result.tool_name, ())}
+        details = json.dumps(_compact(shown), ensure_ascii=False, default=str)
         if len(details) > _MAX_EVIDENCE_CHARS:
             details = details[:_MAX_EVIDENCE_CHARS] + " ...(truncated)"
         blocks.append(

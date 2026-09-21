@@ -40,11 +40,13 @@ class Settings(BaseSettings):
     # Off = the deterministic join of each tool's text summary, exactly as before.
     compose_answers: bool = True
 
-    # Use the trained remote-sensing captioner (models/captioning/) in scene_description. Off by default
-    # even when its checkpoint is installed: on 21 real scenes it described roughly half correctly, and
-    # called farmland "a dense urban area with a ground track field" with the highest confidence of the
-    # run (see CLAUDE.md). The object scan alone is thinner but never wrong about what it reports.
-    enable_captioner: bool = False
+    # Use the trained remote-sensing captioner (models/captioning/) in scene_description whenever its
+    # checkpoint is installed. Without it the description is only the object scan (airplanes, ships,
+    # storage tanks), which cannot say anything about roads, buildings or vegetation. Set false to force
+    # the object scan only. Measured on 21 real scenes (see CLAUDE.md): right in gist for 15, partly right
+    # for 6, wrong for none -- but its counts are unreliable, so the answer composer treats it as an
+    # impression and trusts the detector's numbers.
+    enable_captioner: bool = True
 
     api_host: str = "127.0.0.1"
     api_port: int = 8000
