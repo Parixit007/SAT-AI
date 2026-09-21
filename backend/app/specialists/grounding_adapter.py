@@ -9,7 +9,9 @@ so the number of boxes is the count (the VQA checkpoint answers count questions 
 unreliable word). The detector is sensitive to wording -- a bare category noun works, a whole
 question doesn't -- so category-style queries are normalised before they reach it."""
 
+import os
 import re
+import tempfile
 import uuid
 from collections import Counter
 from typing import Any
@@ -84,6 +86,71 @@ def normalize_category_query(query: str) -> str:
     return " . ".join(_normalize_part(p) for p in parts)
 
 
+# Small objects on a big frame: the detector shrinks any input to ~800 px, so a car that is 20 px long in a
+# 1024 px street view is a dozen pixels to it. Measured on three real zoomed street scenes (~0.2 m/px), boxes
+# on overlapping 512 px tiles at native resolution -- Brooklyn rows / a suburb / a parking lot:
+#   "vehicle" 9 / 14 / 9    "car" 87 / 48 / 14    "small vehicle" 91 / 52 / 15    "cars" 140 / 69 / 34
+# (a whole 1024 px frame: "car" 19 / 26 / 7 boxes, "vehicle" 1). The plural "cars" is the wording this
+# checkpoint responds to best -- looked at, its boxes sit on the curbside cars -- so a vehicle question is asked
+# as "cars" (and labelled "vehicle"). It is still a LOWER BOUND: a lot with ~80 tightly packed cars produced
+# only a handful of boxes in the lot, so the summary says so. Only these queries pay the roughly nine-fold cost;
+# a stadium or a dam would be cut in pieces by tiling.
+TILED_QUERIES = {"vehicle"}
+DETECTOR_PROMPTS = {"vehicle": "cars"}
+MIN_TILED_SIDE = 700  # below this the whole frame is already about one detector input
+TILE, TILE_OVERLAP = 512, 160
+MERGE_IOU = 0.5
+
+
+def tile_starts(length: int, tile: int, overlap: int) -> list[int]:
+    """Start offsets of `tile`-sized windows covering [0, length) with at least `overlap` pixels shared."""
+    if length <= tile:
+        return [0]
+    starts = list(range(0, length - tile + 1, tile - overlap))
+    if starts[-1] + tile < length:
+        starts.append(length - tile)
+    return starts
+
+
+def merge_boxes(detections: list[dict[str, Any]], iou_threshold: float = MERGE_IOU) -> list[dict[str, Any]]:
+    """Greedy non-maximum suppression, best score first -- the same object seen in two overlapping tiles is one."""
+    kept: list[dict[str, Any]] = []
+    for det in sorted(detections, key=lambda d: -d["score"]):
+        ax1, ay1, ax2, ay2 = det["bbox_xyxy"]
+        area_a = max(ax2 - ax1, 0) * max(ay2 - ay1, 0)
+        duplicate = False
+        for other in kept:
+            bx1, by1, bx2, by2 = other["bbox_xyxy"]
+            inter = max(min(ax2, bx2) - max(ax1, bx1), 0) * max(min(ay2, by2) - max(ay1, by1), 0)
+            union = area_a + max(bx2 - bx1, 0) * max(by2 - by1, 0) - inter
+            if union > 0 and inter / union > iou_threshold:
+                duplicate = True
+                break
+        if not duplicate:
+            kept.append(det)
+    return kept
+
+
+def _ground_tiled(tool, image_path: str, query: str) -> tuple[list[dict[str, Any]], int]:
+    """Run the detector on overlapping native-resolution tiles and merge; returns (detections, tile count)."""
+    from PIL import Image
+
+    image = Image.open(image_path).convert("RGB")
+    width, height = image.size
+    found: list[dict[str, Any]] = []
+    tiles = 0
+    with tempfile.TemporaryDirectory() as tmp:
+        for y0 in tile_starts(height, TILE, TILE_OVERLAP):
+            for x0 in tile_starts(width, TILE, TILE_OVERLAP):
+                tile_path = os.path.join(tmp, "tile.png")
+                image.crop((x0, y0, min(x0 + TILE, width), min(y0 + TILE, height))).save(tile_path)
+                tiles += 1
+                for det in tool.ground(tile_path, query):
+                    x1, y1, x2, y2 = det["bbox_xyxy"]
+                    found.append({**det, "bbox_xyxy": [round(x1 + x0, 1), round(y1 + y0, 1), round(x2 + x0, 1), round(y2 + y0, 1)]})
+    return merge_boxes(found), tiles
+
+
 @serialize_first_call
 def _get_tool():
     global _grounding_tool
@@ -91,6 +158,13 @@ def _get_tool():
         module = load_module(MODELS_DIR / "grounding" / "grounding_tool.py", "grounding_tool")
         _grounding_tool = module.GroundingTool(checkpoint_path=str(GROUNDING_CHECKPOINT))
     return _grounding_tool
+
+
+def _longest_side(image_path) -> int:
+    from PIL import Image
+
+    with Image.open(image_path) as image:
+        return max(image.size)
 
 
 def _handle(query_input: QueryInput, arguments: dict[str, Any]) -> ToolResult:
@@ -101,7 +175,17 @@ def _handle(query_input: QueryInput, arguments: dict[str, Any]) -> ToolResult:
     image_path = query_input.images[0]
 
     tool = _get_tool()
-    detections = tool.ground(str(image_path), query, top_k=top_k)
+    tiled_over = 0
+    prompt = DETECTOR_PROMPTS.get(query.lower(), query)  # what the detector is actually asked (see DETECTOR_PROMPTS)
+    if query.lower() in TILED_QUERIES and _longest_side(image_path) >= MIN_TILED_SIDE:
+        detections, tiled_over = _ground_tiled(tool, str(image_path), prompt)
+        detections.sort(key=lambda d: d["score"], reverse=True)
+        if top_k is not None:
+            detections = detections[:top_k]
+    else:
+        detections = tool.ground(str(image_path), prompt, top_k=top_k)
+    if prompt != query:
+        detections = [{**d, "phrase": query} for d in detections]  # label what the user asked about, not the prompt wording
 
     evidence_path = None
     if detections:
@@ -120,7 +204,14 @@ def _handle(query_input: QueryInput, arguments: dict[str, Any]) -> ToolResult:
         text_summary = f"No regions matching '{query}' were found above the detection threshold."
         confidence = 0.0
 
+    if tiled_over and detections:
+        text_summary += (
+            f" Counted on {tiled_over} overlapping full-resolution tiles: treat the number as a lower bound, because "
+            "tightly packed vehicles (a dense parking lot) are mostly missed."
+        )
     structured = {"detections": detections, "count": len(detections), "by_phrase": by_phrase, "query": query}
+    if tiled_over:
+        structured["tiles"] = tiled_over
     if query != original_query:
         structured["original_query"] = original_query
     return ToolResult(
