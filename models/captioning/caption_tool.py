@@ -42,6 +42,13 @@ DEFAULT_CHECKPOINT_DIR = Path(__file__).resolve().parent / "checkpoints" / "capt
 MAX_NEW_TOKENS = {"detailed": 140, "brief": 64}
 
 
+def prompts_from_meta(meta: dict) -> Dict[str, str]:
+    """The writing styles a checkpoint was trained with, style -> prompt. Round one's checkpoint has a
+    single {"prompt": ...} and that is its "detailed" style; a two-mode checkpoint lists them all in
+    "prompts"."""
+    return dict(meta.get("prompts") or {"detailed": meta["prompt"]})
+
+
 def trim_to_sentence(text: str) -> str:
     """A caption cut off by the token limit ends mid-sentence; keep only the complete sentences."""
     text = text.strip()
@@ -66,8 +73,7 @@ class CaptionTool:
                 "caption_model/ output folder there -- see this file's docstring."
             )
         meta = json.loads(meta_path.read_text())
-        # round one's checkpoints only have {"prompt": ...}, which is the detailed style
-        self.prompts = meta.get("prompts") or {"detailed": meta["prompt"]}
+        self.prompts = prompts_from_meta(meta)
         self.prompt = self.prompts.get("detailed", meta["prompt"])
         self.metrics = meta.get("fine_tuned_metrics", {})
         self.meta = meta
