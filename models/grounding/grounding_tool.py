@@ -261,7 +261,7 @@ class GroundingTool:
             group = {p: i for i, p in enumerate(dict.fromkeys(phrases))}
             keep_idx = batched_nms(xyxy, scores, torch.tensor([group[p] for p in phrases]), iou_threshold=0.6)
         else:
-            keep_idx = []
+            keep_idx = torch.zeros(0, dtype=torch.long)  # a list here made the .tolist() below raise on every zero-hit query
 
         detections = [
             {
@@ -269,7 +269,7 @@ class GroundingTool:
                 "bbox_xyxy": [round(v, 1) for v in xyxy[i].tolist()],
                 "score": round(float(scores[i]), 4),
             }
-            for i in keep_idx.tolist() if len(xyxy)
+            for i in keep_idx.tolist()
         ]
 
         detections.sort(key=lambda d: d["score"], reverse=True)

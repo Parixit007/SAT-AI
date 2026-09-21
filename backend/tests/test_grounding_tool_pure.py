@@ -38,3 +38,44 @@ def test_draw_boxes_handles_a_single_match_and_a_crowd(tmp_path, n):
     tool.draw_boxes(str(source), detections, str(out))
     assert Image.open(out).size == (300, 200)
     assert np.asarray(Image.open(out)).max() > 0  # something was drawn on the black image
+
+
+class _NoModelTool(tool.GroundingTool):
+    """GroundingTool with the network replaced by fixed outputs, so ground()'s own logic can be tested."""
+
+    def __init__(self, logits, boxes):  # deliberately skips the real __init__ (no checkpoint, no checkout)
+        import types
+        self.model = types.SimpleNamespace(tokenizer=lambda caption: {})
+        self._fixed = (logits, boxes)
+
+    def _forward(self, image, caption):
+        return self._fixed
+
+    def _get_phrases(self, mask, tokenized, tokenizer):
+        return "car"
+
+
+def _image(tmp_path):
+    path = tmp_path / "scene.png"
+    Image.new("RGB", (100, 100)).save(path)
+    return str(path)
+
+
+def test_a_query_with_no_match_returns_an_empty_list_instead_of_raising(tmp_path):
+    import torch
+
+    quiet = _NoModelTool(torch.zeros((5, 8)), torch.rand((5, 4)))  # every logit below the 0.25 threshold
+    assert quiet.ground(_image(tmp_path), "airplane") == []
+
+
+def test_matches_come_back_in_pixel_coordinates_best_first(tmp_path):
+    import torch
+
+    logits = torch.zeros((3, 8))
+    logits[0, 0], logits[1, 0] = 0.40, 0.70  # two boxes clear the threshold, the third does not
+    boxes = torch.tensor([[0.50, 0.50, 0.20, 0.20], [0.20, 0.20, 0.10, 0.10], [0.90, 0.90, 0.10, 0.10]])
+    found = _NoModelTool(logits, boxes).ground(_image(tmp_path), "car")
+    assert [d["score"] for d in found] == [0.7, 0.4]
+    assert found[0]["bbox_xyxy"] == [15.0, 15.0, 25.0, 25.0]
+    assert found[1]["bbox_xyxy"] == [40.0, 40.0, 60.0, 60.0]
+    assert {d["phrase"] for d in found} == {"car"}
