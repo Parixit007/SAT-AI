@@ -1,10 +1,16 @@
 """
 caption_tool.py
 
-Local (Mac-side) wrapper around the remote-sensing captioner trained by
-notebooks/kaggle_finetune_caption_vrsbench.ipynb: SmolVLM-500M-Instruct with a VRSBench LoRA merged
-into the weights (a plain half-precision checkpoint directory, ~1GB -- no PEFT needed here).
-Same shape as ../vqa/vqa_tool.py: one class, lazy imports, one inference method, no rendering.
+Local (Mac-side) wrapper around the remote-sensing captioner trained by the Kaggle notebooks
+(kaggle_finetune_caption_vrsbench.ipynb, then kaggle_finetune_caption_scene_mix.ipynb): SmolVLM-500M-
+Instruct with a LoRA merged into the weights (a plain half-precision checkpoint directory, ~1GB -- no
+PEFT needed here). Same shape as ../vqa/vqa_tool.py: one class, lazy imports, one inference method, no
+rendering.
+
+A checkpoint has one or two writing styles, told apart by the prompt it was trained with (its
+caption_meta.json lists them): "detailed" (VRSBench -- a ~46-word object-centric paragraph, the only
+style of the first round's checkpoint) and "brief" (NWPU-Captions -- one sentence saying what kind of
+scene it is, which is where land cover -- farmland, forest, desert, a lake -- lives).
 
 Setup (once): download the `caption_model/` folder from the Kaggle notebook's Output tab into
 models/captioning/checkpoints/caption_model/ (gitignored).
@@ -14,8 +20,9 @@ Usage as a library (what the orchestrator calls):
     from caption_tool import CaptionTool
 
     tool = CaptionTool("models/captioning/checkpoints/caption_model")
-    tool.describe("scene.jpg")
-    # -> {"caption": "The image shows a large airport apron with ...", "confidence": 0.61}
+    tool.describe("scene.jpg")                    # the detailed style (the default)
+    # -> {"caption": "The image shows a large airport apron with ...", "confidence": 0.61, "style": "detailed"}
+    tool.describe("scene.jpg", style="brief")     # only if the checkpoint was trained with it
 
 `confidence` is the mean per-token probability of the generated text -- a generation-likelihood
 proxy for how committed the model was, NOT the probability that the description is true. A fluent
@@ -31,7 +38,8 @@ from pathlib import Path
 from typing import Any, Dict, Optional
 
 DEFAULT_CHECKPOINT_DIR = Path(__file__).resolve().parent / "checkpoints" / "caption_model"
-MAX_NEW_TOKENS = 140  # VRSBench captions average 53 words (~75 tokens); this leaves room for the long ones
+# VRSBench captions average 53 words (~75 tokens), NWPU-Captions 12 (~16 tokens); this leaves room for the long ones
+MAX_NEW_TOKENS = {"detailed": 140, "brief": 64}
 
 
 def trim_to_sentence(text: str) -> str:
@@ -58,8 +66,11 @@ class CaptionTool:
                 "caption_model/ output folder there -- see this file's docstring."
             )
         meta = json.loads(meta_path.read_text())
-        self.prompt = meta["prompt"]
+        # round one's checkpoints only have {"prompt": ...}, which is the detailed style
+        self.prompts = meta.get("prompts") or {"detailed": meta["prompt"]}
+        self.prompt = self.prompts.get("detailed", meta["prompt"])
         self.metrics = meta.get("fine_tuned_metrics", {})
+        self.meta = meta
 
         if device is None:
             device = "mps" if torch.backends.mps.is_available() else "cpu"
@@ -71,13 +82,20 @@ class CaptionTool:
         self.processor.image_processor.do_image_splitting = bool(meta.get("do_image_splitting", False))
         self.model = AutoModelForImageTextToText.from_pretrained(checkpoint, dtype=torch.bfloat16).to(device).eval()
 
-    def describe(self, image_path: str, max_new_tokens: int = MAX_NEW_TOKENS) -> Dict[str, Any]:
-        """Describe one image. Returns {"caption": str, "confidence": float}."""
+    @property
+    def styles(self) -> list:
+        return list(self.prompts)
+
+    def describe(self, image_path: str, style: str = "detailed", max_new_tokens: Optional[int] = None) -> Dict[str, Any]:
+        """Describe one image. Returns {"caption": str, "confidence": float, "style": str}."""
         from PIL import Image
 
+        if style not in self.prompts:
+            raise ValueError(f"This checkpoint has no {style!r} style (it has {self.styles}).")
         torch = self._torch
         image = Image.open(image_path).convert("RGB")
-        messages = [{"role": "user", "content": [{"type": "image"}, {"type": "text", "text": self.prompt}]}]
+        max_new_tokens = max_new_tokens or MAX_NEW_TOKENS.get(style, MAX_NEW_TOKENS["detailed"])
+        messages = [{"role": "user", "content": [{"type": "image"}, {"type": "text", "text": self.prompts[style]}]}]
         prompt = self.processor.apply_chat_template(messages, add_generation_prompt=True)
         inputs = self.processor(text=[prompt], images=[[image]], return_tensors="pt").to(self.device)
 
@@ -97,18 +115,19 @@ class CaptionTool:
         log_probs = self.model.compute_transition_scores(generation.sequences, generation.scores, normalize_logits=True)[0]
         real = new_tokens[0] != self.processor.tokenizer.pad_token_id
         confidence = float(log_probs[real].float().exp().mean()) if bool(real.any()) else 0.0
-        return {"caption": re.sub(r"\s+", " ", caption), "confidence": round(confidence, 4)}
+        return {"caption": re.sub(r"\s+", " ", caption), "confidence": round(confidence, 4), "style": style}
 
 
 def _cli():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--image", required=True, help="Path to the input image")
     parser.add_argument("--checkpoint-dir", default=str(DEFAULT_CHECKPOINT_DIR))
+    parser.add_argument("--style", default="detailed", help="detailed or brief (brief needs a checkpoint trained with it)")
     args = parser.parse_args()
 
     if not Path(args.image).exists():
         sys.exit(f"Image not found: {args.image}")
-    print(json.dumps(CaptionTool(args.checkpoint_dir).describe(args.image), indent=2))
+    print(json.dumps(CaptionTool(args.checkpoint_dir).describe(args.image, style=args.style), indent=2))
 
 
 if __name__ == "__main__":

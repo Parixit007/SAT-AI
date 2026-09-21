@@ -516,7 +516,10 @@ original React/Leaflet stack — `framer-motion`, see above.
   availability or licence: RSICD, whose 30 scene classes include farmland, forest, desert and river, or
   NWPU-Captions, whose 45 include wind farm and circular/rectangular farmland), likely with a second
   short "brief scene" prompt beside VRSBench's detailed one, then rerun the same 21-scene reading; it
-  costs about two more hours of Kaggle GPU. Until then the description of a farm, forest or desert is
+  costs about two more hours of Kaggle GPU. **Round two is that run (2026-09-21, see the
+  `kaggle_finetune_caption_scene_mix.ipynb` entry); `CaptionTool.describe(image, style="brief"|
+  "detailed")` already supports both styles** (`caption_meta.json`'s `prompts`; the round-one checkpoint
+  only has "detailed"). Until it is read on the 21 scenes the description of a farm, forest or desert is
   the honest "no airplanes, ships or tanks found".
 - All five image-based specialists (grounding, water segmentation, VQA, change detection, fusion)
   share one shape: a `*Tool` class with lazy imports + one inference method, plus a separate
@@ -913,6 +916,33 @@ Settings), checkpoints downloaded from the Output tab afterward.
   `kernels output` reads the whole 1GB file in one non-resumable request and hung at ~1 KB/s, so fetch
   the small files (`caption_ckpt/best_trainable.pt` 117MB, `caption_model/caption_meta.json`) with
   `--file-pattern` and run `models/captioning/rebuild_checkpoint.py`.
+- **`kaggle_finetune_caption_scene_mix.ipynb`** — round two of the captioner, written because round one's
+  real-scene reading showed a vocabulary gap (see the captioning entry): it adds **NWPU-Captions**
+  (31,500 images, 45 scene classes incl. circular/rectangular farmland, forest, desert, lake, tennis
+  court, stadium, thermal power station; 5 human captions each, mean 12 words; the authors' 25,200 /
+  3,150 / 3,150 split) as a second, *brief-scene* mode next to VRSBench's *detailed* mode, told apart only
+  by the prompt (`Briefly describe the scene.` vs round one's `Describe the image in detail.`). Data
+  facts checked first: captions are one plain 20.5MB JSON on GitHub raw (the image tarball beside it is
+  Git-LFS, not used); the Hugging Face mirror `jonathan-roberts1/NWPU-RESISC45` keeps the original
+  filenames in its parquet, so captions join by name (asserted ≥99.5% at run time); the SmolVLM
+  processor resizes any input to 512×512 (a 256px NWPU image is upsampled with a full attention mask —
+  no black padding — and a 1024×822 capture is squashed square). Design: batches are homogeneous in mode
+  (`ModeBatches`; short captions padded to paragraph length waste compute and let the longer mode
+  dominate the loss), each image once per epoch with a random one of its 5 captions, 2 epochs, model
+  selection on the *mean* of the two modes' validation losses (300 VRSBench + 315 NWPU images), the
+  VRSBench split/seed/test images identical to round one so its 1,000-image test numbers stay directly
+  comparable (round one's base-model and fine-tuned numbers are recorded in the notebook, not re-run).
+  Brief-mode evaluation: 30 test images per class with all 5 references (BLEU/ROUGE/CIDEr) plus a "names
+  its own scene" rate — the words a class's training captions use ≥3× more than other classes' (top 6)
+  and how often a generated caption uses one, next to the same rate for the human references — wrapped
+  so a bug there cannot cost the export; all test generations are saved to `test_generations.json`.
+  **Verified locally before pushing** by running every code cell end to end on real VRSBench captions +
+  images and a 320-image real NWPU sample covering all 45 classes (`CAP_SMOKE_TEST`/`CAP_DATA_ROOT`,
+  three times, the last on the final file), and by exercising the real download branch (a real GitHub
+  fetch + Hub listing; only the 425MB parquet transfer stubbed) — which caught that `urllib` fails on this
+  Mac's python.org build with `CERTIFICATE_VERIFY_FAILED`, so it uses `requests`. Pushed as kernel
+  `parixitsinghbalot/satquery-caption-scene-mix` v1, 2026-09-21 (T4; ~2.3 h estimated; GPU quota
+  before it: 25.5 of 30 h, resetting 2026-09-26). **Results: _pending — fill in from the kernel log._**
 
 VRSBench coordinate gotcha (verified against the actual data before writing the v2 grounding
 notebook, documented in its own cell too): `[refer]` boxes in `VRSBench_train.json` are **0-100
