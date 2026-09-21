@@ -1,71 +1,76 @@
 # SatQuery AI
 
 **An agentic vision-language assistant for remote-sensing imagery.** Ask a natural-language
-question about a satellite image, a bi-temporal pair, or an optical+SAR pair — an LLM-driven
-controller routes the query to the right specialist model(s), executes them, and returns an
-evidence-grounded answer with a full, auditable execution trace.
+question about a satellite image, a bi-temporal pair, an optical+SAR pair or just a location — an
+LLM-driven controller routes the query to the right specialist model(s), runs them, and returns an
+evidence-grounded answer with an auditable execution trace.
 
-This isn't a single VLM answering everything from vibes. Every answer traces back to a named tool,
-a checkpoint (or an explicit "no model, deterministic computation"), and a confidence score whose
-meaning is documented per tool — because "confidence: 0.83" means something different coming from
-a segmentation model's pixel probabilities than from a GIS overlay's data-completeness count, and
-papering over that difference would make the whole system less trustworthy, not more.
+This is not one VLM answering everything from vibes. Every answer traces back to a named tool, a
+checkpoint (or an explicit "no model, deterministic computation"), and a confidence score whose
+meaning is documented per tool — "confidence 0.83" means something different from a segmentation
+model's pixel probabilities than from a GIS overlay's data-completeness count, and papering over that
+would make the system less trustworthy, not more.
 
-Built for a remote-sensing AI assignment modeled on an ISRO/SAC-style evaluation — see
-[`problem_statement.txt`](problem_statement.txt) for the full spec this was built against.
+Built for a remote-sensing AI assignment modelled on an ISRO/SAC-style evaluation — see
+[`problem_statement.txt`](problem_statement.txt) for the spec.
 
 ## What it can do
 
-| Capability | Status | How |
+| Capability | Tool | Status |
 |---|---|---|
-| **Visual question answering** | ✅ Working | PaliGemma fine-tuned on RSVQA-LR |
-| **Text-guided region grounding** | ✅ Working | Grounding DINO fine-tuned on DIOR-RSVG |
-| **Bi-temporal change analysis** | ✅ Working (Stage 1) | Adaptive pixel-differencing; semantic segmentation model queued |
-| **Optical–SAR cross-modal fusion** | ✅ Working (Stage 1) | SAR-backscatter physics, cross-checked against the optical water read |
-| **Groundwater potential** ("should I dig a well here?") | ✅ Working | Google Earth Engine, AHP-weighted GIS overlay — no model, fully deterministic |
-| **Agentic orchestration** | ✅ Working | LLM picks tools; everything else (validation, execution, trace) is deterministic Python |
+| Visual question answering | `visual_question_answering` | Working — PaliGemma-3B (Google's RSVQA-LR fine-tune); one- or two-word answers |
+| Find and **count** named objects | `text_guided_grounding` | Working — Grounding DINO fine-tuned on DIOR-RSVG + VRSBench + DOTA; vehicles counted on native-resolution tiles (a lower bound) |
+| "Describe this image" | `scene_description` | Working — three sources: a remote-sensing captioner, land-cover measurements and an object scan |
+| **Buildings, roads, vegetation, water** — shares, building count, roof colours | `land_cover_analysis` | Working — U-Net trained on OpenEarthMap (validation mIoU 0.63) |
+| Water bodies | `water_body_segmentation` | Working — U-Net (validation IoU 0.79) |
+| Bi-temporal change ("has the built-up area increased?") | `change_detection` | Working — Siamese semantic-change net trained on SECOND-CC; pixel-differencing fallback |
+| Optical–SAR analysis | `optical_sar_fusion` | Stage 1 — SAR-backscatter physics reconciled with the optical water read (training-free) |
+| Groundwater potential ("should I dig a well here?") | `groundwater_potential` | Working — Google Earth Engine, weighted GIS overlay (deterministic) |
+| Active wildfire nearby | `wildfire_detection` | Working — NASA FIRMS via Earth Engine |
+| Agentic orchestration | controller | Working — LLM picks tools; everything else is deterministic Python |
 
-All five mandatory capabilities from the spec are implemented end to end. "Stage 1" tools are
-intentionally training-free so they work today; each has a Stage 2 fine-tuned upgrade path already
-scoped (see [`CLAUDE.md`](CLAUDE.md) for the detailed roadmap).
+Bounds worth knowing (measured, and written up in [`CLAUDE.md`](CLAUDE.md)): the captioner was right
+in gist for 19 of 29 real scenes, partly right for 8 and wrong for 2, and its object counts are not
+trusted; building counts under-count dense blocks because touching buildings merge; the land-cover
+model mislabels shadowed streets, dune shadows and some desert terrain; the optical–SAR tool and the
+VQA model are not yet benchmarked or fine-tuned by us; there is no end-to-end benchmark harness yet.
 
-## How a query actually gets answered
+## How a query is answered
 
 ```
-query + image(s)/location
+query + image(s) / location
         │
         ▼
- input validation ──────► format/count/dimension checks, geo-metadata extraction
-        │                  (no LLM call — deterministic Python)
+ 1 validate ─────► format, count and size checks; real geo-metadata from GeoTIFF / EXIF
+        │           (deterministic Python — no LLM)
         ▼
- LLM tool selection ────► Gemini or Groq picks which specialist(s) to call,
-        │                  given the query + a text summary of the input
-        │                  (never given raw pixels — this measures tool-calling
-        │                  quality, not vision)
+ 2 route ────────► Gemini or Groq picks the tool(s) from the query and a TEXT summary of the
+        │           input — never pixels. The UI can bypass this with a manual tool picker.
         ▼
- compatibility check ───► does the input actually satisfy what the chosen tool
-        │                  needs (image count, modality, location)? One retry
-        │                  on mismatch, then a recorded skip — never a crash.
+ 3 check ────────► does the input satisfy the tool (image count, modality, location)?
+        │           One retry, then a recorded skip — never a crash.
         ▼
- execution ─────────────► the specialist runs; a failure here (missing
-        │                  dependency, gated model, upstream API down) becomes
-        │                  a trace warning, not a 500
+ 4 execute ──────► up to 3 tools in parallel; a failing tool becomes a trace warning, not a 500
+        │
         ▼
- execution trace ───────► selected task, tool(s) used, checkpoint id(s),
-                           confidence, warnings, timestamp — built from what
-                           actually ran, never from the LLM's own narration
+ 5 compose ──────► per-tool confidence combined; the LLM writes the answer ONLY from the tools'
+        │           outputs, and every multi-digit number in it is checked against the evidence
+        │           (one retry, then the plain deterministic text is kept)
+        ▼
+ 6 trace ────────► selected task, tools, checkpoint ids, confidence, warnings, timestamp — built
+                    from what actually ran, never from the LLM's own narration
 ```
 
-The LLM makes exactly one decision: which tool(s) to call. It never sees raw pixels, never phrases
-the final answer, and never writes anything into the trace directly — that separation is what
-makes the trace auditable rather than just an LLM's word for it.
+The LLM makes exactly two decisions: which tools to call, and how to phrase what they found. It never
+sees raw pixels and never writes into the trace, so uploaded imagery stays on the machine; the only
+outbound calls are text to the LLM provider, map-tile requests to Esri and coordinates to Earth Engine.
 
 ## Quick start
 
 **Backend** (FastAPI):
 ```bash
 pip install -r backend/requirements.txt
-cp .env.example .env   # fill in at least one of GEMINI_API_KEY / GROQ_API_KEY
+cp .env.example .env   # set at least one of GEMINI_API_KEY / GROQ_API_KEY
 cd backend && uvicorn app.main:app --reload --port 8000
 ```
 
@@ -74,75 +79,90 @@ cd backend && uvicorn app.main:app --reload --port 8000
 cd frontend && npm install && npm run dev   # http://localhost:5173
 ```
 
-Without an LLM key, `/api/query` returns a clean 503 — not a crash. The groundwater tool similarly
-needs `GEE_PROJECT_ID`/`GEE_SERVICE_ACCOUNT_EMAIL`/`GEE_SERVICE_ACCOUNT_KEY_FILE`; VQA needs
-`HF_TOKEN` (the checkpoint is gated on Hugging Face). Every other tool works with no extra setup.
-
-Run the test suite:
+**Tests:**
 ```bash
-cd backend && pytest -q   # 68 passed, 1 skipped (the skip needs groundingdino installed locally)
+cd backend && pytest -q          # 244 passed, 1 skipped
+cd frontend && npm run build     # type-checks, then builds
 ```
+
+**Model checkpoints are not in git.** Each specialist loads a checkpoint from
+`models/<name>/checkpoints/` (gitignored) that the matching notebook in `notebooks/` produces on
+Kaggle. A specialist whose checkpoint is missing fails with a clear message and the rest keep working;
+`scene_description` simply uses whichever of its sources are installed.
+
+| Needs | For |
+|---|---|
+| `GEMINI_API_KEY` or `GROQ_API_KEY` | routing and answer phrasing (without one `/api/query` returns a clean 503) |
+| a one-time `git clone` of Open-GroundingDino + a few pip packages (see `models/grounding/grounding_tool.py`) | grounding and counting |
+| `HF_TOKEN` (the PaliGemma checkpoint is gated) | visual question answering |
+| `GEE_PROJECT_ID`, `GEE_SERVICE_ACCOUNT_EMAIL`, `GEE_SERVICE_ACCOUNT_KEY_FILE` | groundwater and wildfire |
+| `ENABLE_CAPTIONER`, `ENABLE_LANDCOVER` (both default true) | use the captioner / land-cover model inside "describe this image" when installed |
 
 ## The interface
 
-A full-bleed map is the location picker — click it, or upload a georeferenced image and it drops
-the pin itself. A fixed side panel holds the query box, example prompts, image upload, and results:
-answer text, a confidence badge, an evidence image where the tool produces one (a mask overlay, a
-bounding box, a before/after composite), and a collapsible execution trace for the full audit
-detail. Every query result is downloadable as a plain-text report.
+A report-panel layout, not a chat log: each query is a full-width entry with the answer, a confidence
+badge, and one **evidence card per tool** — bar charts, colour-coded segmentation overlays, detection
+boxes drawn over the original image, before/after composites — plus a collapsible execution trace and
+a text report download. Around it: a capabilities gallery on the home screen (click a card to fill in
+an example query), an **Advanced** panel to pick tools manually with parameter forms generated from
+each tool's JSON schema, and a **Leaflet map** with real Esri imagery where you can drop a pin or draw
+an area and capture it as a georeferenced image that flows through the same path as an upload.
 
 ## Specialist models
 
-| Tool | Model | Training data |
-|---|---|---|
-| `visual_question_answering` | PaliGemma-3B | RSVQA-LR (Google's own fine-tune; our own LoRA fine-tune notebook included) |
-| `text_guided_grounding` | Grounding DINO (Swin-T) | DIOR-RSVG + VRSBench referring expressions |
-| `water_body_segmentation` | U-Net (ResNet-34 encoder) | Satellite Images of Water Bodies (Kaggle) |
-| `change_detection` | Otsu-adaptive pixel differencing | none needed (Stage 1); SECOND-CC queued for Stage 2 |
-| `optical_sar_fusion` | Recursive-Otsu SAR backscatter analysis | none needed (Stage 1); TUM SEN1-2 queued for Stage 2 |
-| `groundwater_potential` | AHP-weighted GIS overlay (rainfall, TWI, land cover, distance-to-water) | not a trained model — pure Earth Engine computation |
+| Tool | Model | Trained on | Measured |
+|---|---|---|---|
+| `text_guided_grounding` | Grounding DINO (Swin-T) | DIOR-RSVG + VRSBench + DOTA | Acc@0.5 0.827, mIoU 0.746 (DIOR-RSVG test subset) |
+| `scene_description` (captioner) | SmolVLM-500M + LoRA | VRSBench + NWPU-Captions | BLEU-4 0.111, CIDEr 0.244 on 1,000 VRSBench images; real-scene reading above |
+| `land_cover_analysis` | U-Net (ResNet-34) | OpenEarthMap | mIoU 0.633; building IoU 0.771; building count correlation 0.88 |
+| `water_body_segmentation` | U-Net (ResNet-34) | Satellite Images of Water Bodies | validation IoU 0.7945 |
+| `change_detection` | Siamese semantic-change U-Net | SECOND-CC | Score 0.376; buildings direction 84% (guessing "unchanged" gets 40%) |
+| `visual_question_answering` | PaliGemma-3B | RSVQA-LR (Google's fine-tune) | not evaluated here — no held-out RSVQA-LR answers exist locally |
+| `optical_sar_fusion` | recursive Otsu on SAR + the water model | none (Stage 1) | not benchmarked |
+| `groundwater_potential`, `wildfire_detection` | deterministic Earth Engine computations | none | not validated against ground truth |
 
-Every image-based tool follows the same shape: a `*Tool` class in `models/<name>/` with lazy
-imports and one inference method, plus a separate `draw_*()` function for evidence-image
-rendering — inference never touches the image directly, drawing is always an explicit, skippable
-step. See [`CLAUDE.md`](CLAUDE.md) for the full architectural writeup, including *why* each design
-decision was made, not just what it is.
+Every image-based tool has the same shape: a `*Tool` class in `models/<name>/` with lazy imports and one
+inference method, plus a separate `draw_*()` for the evidence image. Adding a specialist is one adapter
+module in `backend/app/specialists/` and one line in `build_default_registry()`. [`CLAUDE.md`](CLAUDE.md)
+records why each design decision was made, including what was measured and what went wrong.
 
 ## Training on Kaggle
 
-The local dev machine has no NVIDIA GPU, so every fine-tune happens on Kaggle. `notebooks/`
-currently has four notebooks — grounding (original + a v2 continued run adding VRSBench referring
-data), water segmentation, and VQA LoRA fine-tuning — with change detection and fusion's Stage 2
-notebooks scoped but not yet written. Each follows the same 10-section structure (setup → data →
-conversion → config → train → eval → export), so a new one is easy to read once you've seen the
-first. Every dataset choice, box-coordinate convention, and split methodology in these notebooks
-was verified against the actual downloaded data or the original authors' source before being
-written — not assumed.
+The dev machine has no NVIDIA GPU, so every fine-tune runs on Kaggle (`notebooks/`, ten notebooks):
+grounding (original, a superseded continuation, a DOTA-augmented v3 and its eval-only companion), water
+segmentation, the semantic change model, the captioner (VRSBench, then a scene-mix round with
+NWPU-Captions), the land-cover segmenter, and a VQA LoRA notebook that is written but not yet run. Each
+was run end to end locally on real data in a smoke mode before any GPU time was spent, and every dataset
+convention (coordinate systems, label encodings, split leakage) was checked against the real files —
+several real bugs were found that way, and are recorded in `CLAUDE.md`.
 
 ## Tech stack
 
 **Backend:** FastAPI · PyTorch · `segmentation-models-pytorch` · Transformers · `rasterio` ·
-Google Earth Engine · Gemini / Groq (swappable LLM tool-calling backend)
-**Frontend:** React · TypeScript · Vite · Leaflet
-**Data:** DIOR-RSVG, VRSBench, RSVQA-LR, CDVQA, BigEarthNet, SECOND-CC, TUM SEN1-2 — see
-`data/scripts/` for the download scripts and `CLAUDE.md` for licensing notes per dataset.
+Google Earth Engine · Gemini / Groq (swappable tool-calling backend)
+**Frontend:** React · TypeScript · Vite · Leaflet · framer-motion
+**Data:** DIOR-RSVG, VRSBench, DOTA, NWPU-Captions, SECOND-CC, OpenEarthMap, RSVQA-LR, CDVQA,
+BigEarthNet — see `data/scripts/` for the download scripts and `CLAUDE.md` for per-dataset notes.
 
 ## Project structure
 
 ```
 backend/app/            FastAPI app + orchestrator
-  orchestrator/          input validation, LLM tool-calling, execution trace
-  specialists/            thin adapters wiring models/ into the tool registry
-  gee/                    Google Earth Engine layers + groundwater scoring
-backend/tests/           pytest suite — orchestrator, API, and per-specialist tests
-frontend/src/            React + Vite + TS single-page app
-models/                  standalone specialist wrapper scripts (grounding, VQA, water, change, fusion)
-notebooks/                Kaggle fine-tuning notebooks (grounding, water segmentation, VQA)
-data/scripts/             dataset download scripts
+  orchestrator/          validation, LLM routing, execution, answer composer, trace
+  specialists/           adapters wiring models/ into the tool registry (one per tool)
+  gee/  gis/             Earth Engine layers and scoring; Esri map-area capture
+backend/tests/          pytest suite — orchestrator, API, composer and every specialist
+frontend/src/           React + Vite + TypeScript single-page app
+models/                 standalone specialist wrappers (grounding, captioning, landcover, ...)
+notebooks/              Kaggle fine-tuning notebooks
+data/scripts/           dataset download scripts
 ```
 
-## Status
+## Status and what's next
 
-Actively developed. All mandatory capabilities are implemented and tested (68 tests passing); the
-current focus is Stage 2 fine-tuning for change detection and fusion, plus ongoing hardening. See
-[`CLAUDE.md`](CLAUDE.md) for the full current-state writeup and phased roadmap.
+All five mandatory capabilities have a working end-to-end implementation through the UI (change
+description and optical–SAR analysis only at a basic level); see [`CLAUDE.md`](CLAUDE.md) for the detailed
+current-state writeup. The largest gaps against the spec are
+an end-to-end benchmark harness (VRSBench, RSVQA, CDVQA), a change-*description* model and CDVQA
+evaluation, a learned optical–SAR fusion stage and sensor-robust modality handling (e.g. a single-band
+panchromatic image is currently guessed to be SAR), any use of BigEarthNet, and our own VQA fine-tune.
