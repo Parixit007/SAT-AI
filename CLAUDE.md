@@ -983,10 +983,54 @@ Settings), checkpoints downloaded from the Output tab afterward.
   epochs pulled the model toward LoveDA's own visual domain (Google Earth over Chinese cities — a different
   color/contrast profile and building style than Esri) enough to measurably help LoveDA's *own* held-out set
   while net-hurting the Esri-style imagery this app actually serves; the blended selection metric never saw
-  that cost because it only ever scores against OpenEarthMap and LoveDA themselves. A future attempt should
-  probably weight LoveDA down relative to OpenEarthMap, use a much lower encoder LR or freeze it entirely, and
-  score model selection against a held-out sample of real Esri captures rather than only the two training
-  distributions.
+  that cost because it only ever scores against OpenEarthMap and LoveDA themselves.
+- **`kaggle_finetune_landcover_frozen_encoder.ipynb`** — round three, tried immediately after round two on
+  the same "train more" request, this time acting directly on round two's own diagnosis: the **encoder is
+  frozen** (`requires_grad_(False)`, kept in `eval()` mode during training so its BatchNorm running stats
+  don't drift either, excluded from the optimiser entirely — round one's general visual features are kept
+  byte-for-byte, only the decoder adapts) and **LoveDA is down-weighted** (OpenEarthMap keeps 2 crops per
+  image per epoch, LoveDA gets 1, so OEM tiles outnumber LoveDA's 4,606 to 2,522 instead of round two's
+  near-even mix), for half as many epochs (6). Exports **two candidates, neither auto-installed**: the
+  epoch with the best blended OEM+LoveDA validation score (`landcover_unet.pt`) and the last epoch
+  (`landcover_unet_final.pt`, since a frozen encoder is less prone to overfitting than round two warned) —
+  the real decision is the same by-eye comparison against round one, done after download. **Verified locally
+  before pushing** the same way as round two. Pushed as kernel `parixitsinghbalot/satquery-landcover-frozen-
+  encoder`. **Real run (T4, 22.0 min training — a third of round two's 72 min, both from fewer epochs and a
+  frozen encoder's cheaper backward pass — 0.58 GPU-hours total including evaluation, versus round two's
+  ~1.4h): 445 steps/epoch, only 3.15M of 24.4M parameters trainable (12.9%, the decoder + head), no
+  non-finite steps.** OpenEarthMap validation (384 tiles): mIoU 0.6253 for both candidates (round one
+  0.6331, round two 0.6237 — closer to round one than round two was, and critically **bareland recovered**
+  to 0.409-0.411 from round two's regression to 0.383, matching round one's 0.421 much more closely — a
+  direct, measured benefit of not touching the encoder); building IoU 0.771/0.769, flat. LoveDA validation
+  (full 1,669 tiles): macro IoU 0.4918 (best) / 0.4899 (final) — a smaller gain than round two's 0.5284,
+  as expected from a frozen encoder having less capacity to specialise; **building IoU 0.546→0.585 (best) /
+  0.574 (final), recall 0.760→0.813/0.796, urban IoU 0.564→0.603/0.595** — real, positive, smaller than
+  round two's 0.603/0.846/0.651. **By eye, this is the honest, more complicated result of the two
+  attempts**: freezing the encoder fixed round two's worst failures — **zero hallucinated water/agriculture
+  on the same natural scenes** (the Moroccan dune field and Olympic forest are both clean, matching round
+  one almost exactly), Hong Kong Central's real buildings are no longer lost, Dharavi (Mumbai) genuinely
+  improved (a real, better-textured 36%→47-48% building read that finds more of the dense informal roofs
+  *without* round two's catastrophic full-frame blob) — but it is **not a net win over round one either**,
+  checked on both candidates (they behave almost identically on every scene that matters): it **still loses
+  real building coverage** on Wembley (22%→15-16%, count 254→124-129, a bigger drop than round two's
+  254→204), Heathrow T5 (11%→9%, count 35→24-25), Hoover Dam's small complex (15→8-11), and Dubai Marina
+  (41%→27-34%); it **undoes round two's one genuine win** (the Torrance suburb view's grey-roofed houses —
+  round three is back to round one's exact 63, not round two's improved 73); and **on the exact scene that
+  started this — the user's own campus screenshot — it did not move the number that mattered**: building
+  share 4%→4%, count 57→49-52 (both candidates), while introducing a milder version of round two's tree/
+  rangeland shift (39%→23-24% tree, a chunk of real forest re-called rangeland rather than round two's
+  false "agriculture land" — less wrong, still not right). **Decision: kept round one installed; neither
+  round-three candidate was copied into `models/landcover/checkpoints/`.** Read honestly this time: the
+  likely reason two different, carefully-targeted fixes both failed to move the actual target case is a
+  **training-domain mismatch neither could have fixed even in principle** — OpenEarthMap and LoveDA are
+  *both* straight-down (nadir) aerial/satellite imagery, and the user's campus screenshot is an **oblique**
+  3D web-map render with visible building facades, a fundamentally different viewing geometry neither
+  dataset contains a single example of. Round one's own entry already named this ("oblique renders and grey
+  roofs are out of distribution") but round two and three both added more nadir data anyway, which is why
+  neither could touch it. A further attempt on OpenEarthMap/LoveDA alone is not expected to do better; the
+  actual fix needs training data with real oblique/off-nadir viewpoints (e.g. SpaceNet's off-nadir building
+  dataset, or synthetically perspective-warping existing nadir footprints) — a meaningfully bigger effort
+  than another ablation on the same two nadir sources, not attempted here.
 - **`kaggle_finetune_water_unet.ipynb`** — trains water-body segmentation from scratch (no prior
   notebook existed for this checkpoint) on the public "Satellite Images of Water Bodies" dataset
   (Kaggle, `franciscoescobar/satellite-images-of-water-bodies`, CC BY-NC-SA 4.0, 2841 image/mask
