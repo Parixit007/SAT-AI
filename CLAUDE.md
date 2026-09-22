@@ -937,6 +937,56 @@ Settings), checkpoints downloaded from the Output tab afterward.
   the count to 79 fragments without fixing the miss, so no scale rule was added. The cause is domain: OpenEarthMap
   labels nadir footprints; oblique renders and grey roofs are out of distribution. Straight-down imagery and
   georeferenced captures behave much better.
+- **`kaggle_finetune_landcover_oem_loveda.ipynb`** — a round-two attempt at the grey-roof miss above, tried
+  2026-09-21/22 at the user's request ("train more") and **not installed** after real-scene inspection — kept in
+  the repo and on Kaggle as a documented negative result, not deleted. Continues training from the round-one
+  checkpoint (attached as the private dataset `satquery-landcover-r1`) adding **LoveDA** (CC BY-NC-SA 4.0, via
+  the Kaggle copy `damifinocchiaro/loveda`: 2,522 train + 1,669 val 1024×1024 Google-Earth tiles over three
+  Chinese cities, 0.3 m/px, hand-labelled) — chosen because its urban tiles are full of exactly what round one
+  missed: dense high-rise blocks with leaning facades and large flat grey roofs. **Checked before writing it**:
+  the layout (`Train/Train/{Urban,Rural}/{images_png,masks_png}`, `Val/Val/...`) and the label encoding, by
+  rendering six real tiles and looking at them (0 no data, 1 background, 2 building, 3 road, 4 water, 5 barren,
+  6 forest, 7 agricultural). LoveDA's "background" is everything OpenEarthMap splits into rangeland *and*
+  developed space, so a background pixel can't just be relabelled one or the other — it is trained with a
+  **set-valued loss**, `-log(P(rangeland) + P(developed space))` (verified numerically: a background pixel with
+  probability split any way between just those two classes scores ~0 loss, mass on "building" there costs
+  >10 nats), which keeps the one signal that matters (pavement ≠ building) without inventing a label LoveDA
+  doesn't give. Mixed OEM+LoveDA batches; U-Net/ResNet34/fp16/cosine schedule otherwise unchanged from round
+  one. Model selection = mean of OpenEarthMap mIoU and LoveDA macro IoU on fixed validation subsets, so neither
+  dataset could be traded away for the other. **Verified locally before pushing** by running every cell end to
+  end on real OpenEarthMap and LoveDA pairs from round one's smoke set plus six freshly downloaded LoveDA tiles,
+  starting from the real round-one checkpoint. Pushed as kernel `parixitsinghbalot/satquery-landcover-oem-loveda`.
+  **Real run (T4, 72.0 min training, 12 epochs from the round-one start since a checkpoint was found, 603 steps/
+  epoch, batch 16, lr 1.5e-4/⅓ for the encoder, best weights from epoch 11): no non-finite steps.** Full
+  OpenEarthMap validation (384 tiles) barely moved — mIoU 0.6237 vs round one's 0.6331 (−0.009), building IoU
+  0.769 vs 0.771, building count MAE 20.9 vs 21 (correlation 0.886 vs 0.883) — round one scored fresh on 400
+  LoveDA validation tiles came to macro IoU 0.406, building IoU 0.546 (precision 0.660, recall 0.760, urban IoU
+  0.564); round two on the full 1,669 LoveDA validation tiles: macro IoU 0.5284, **building IoU 0.603 (precision
+  0.677, recall 0.846, urban IoU 0.651)** — a real, measured gain in finding LoveDA's own buildings, especially
+  recall. **On paper this looks like a clean win. By eye on real Esri imagery it is not one.** Compared side by
+  side with round one on 16 real scenes spanning street/natural/landmark/dense-downtown (the existing 32-scene
+  set plus ten freshly captured dense-city tiles — Hong Kong Central, Shanghai Lujiazui, Chicago Loop, Dubai
+  Marina, Tsinghua campus, Louisville UPS hub, Dharavi (Mumbai), Tokyo Shinjuku, MIT campus, Manhattan Midtown —
+  and the user's own campus screenshot): round two introduces **hallucinated water and agriculture in natural
+  terrain round one got right** — a solid false lake appears mid-dune-field in the Moroccan desert scene, and
+  patches of false agriculture/water appear inside the solid-forest Olympic scene, neither present in round
+  one's read of the same images; it **loses real building coverage** on Hong Kong Central (a visible cluster of
+  real rooftops becomes "developed space"), Dubai Marina (a real tower's roof partly relabelled "rangeland",
+  building share 41%→27%), Heathrow T5 and Hoover Dam's small complex; it **collapses Dharavi, Mumbai from a
+  textured 381-building read into one undifferentiated 56-count blob** covering 70% of the frame, erasing the
+  real lane structure clearly visible in the image; and on the **exact scene this round was meant to fix, the
+  user's campus screenshot, it did not improve** — building share 4%→3%, count 57→40, and it also broke round
+  one's mostly-correct tree read (39%→17%, with real forest now partly called "agriculture land"). The one
+  clear by-eye improvement is the Torrance suburb view, which picks up several genuine grey-roofed houses round
+  one missed (63→73 buildings). **Decision: kept round one installed; round two's checkpoint was not copied
+  into `models/landcover/checkpoints/`.** Read honestly, continuing training on a 50/50 OEM+LoveDA mix for 12
+  epochs pulled the model toward LoveDA's own visual domain (Google Earth over Chinese cities — a different
+  color/contrast profile and building style than Esri) enough to measurably help LoveDA's *own* held-out set
+  while net-hurting the Esri-style imagery this app actually serves; the blended selection metric never saw
+  that cost because it only ever scores against OpenEarthMap and LoveDA themselves. A future attempt should
+  probably weight LoveDA down relative to OpenEarthMap, use a much lower encoder LR or freeze it entirely, and
+  score model selection against a held-out sample of real Esri captures rather than only the two training
+  distributions.
 - **`kaggle_finetune_water_unet.ipynb`** — trains water-body segmentation from scratch (no prior
   notebook existed for this checkpoint) on the public "Satellite Images of Water Bodies" dataset
   (Kaggle, `franciscoescobar/satellite-images-of-water-bodies`, CC BY-NC-SA 4.0, 2841 image/mask
