@@ -114,33 +114,34 @@ decision (tool selection):
    that both required modalities are actually present. Added for `fusion_adapter.py`; every other
    tool leaves it unset (zero behavior change for them).
 4. **`orchestrator/controller.py`** (`handle_query(query_text, query_input, llm_provider, registry,
-   forced_tool_calls=None)`) — the actual loop, in two phases. **Resolution** (sequential): LLM
-   tool selection (or, if `forced_tool_calls` is given — the UI's manual "Advanced" picker bypasses
-   `select_tools()` entirely — exactly those calls) → compatibility check (one retry on mismatch,
-   then a structured skip-with-warning, never a crash) → compatible calls are queued, not run yet.
-   An **empty first selection also gets one retry** (LLM-selection path only, not
-   `forced_tool_calls=[]` — that's a deliberate "run nothing" request from the Advanced picker, not
-   a failure): tool-calling is probabilistic, confirmed live — "will it burn, past 1000 days"
-   against the real Groq-backed orchestrator declined to call anything once, then routed correctly
-   to `wildfire_detection` on an identical retry, so a second independent sample is a cheap, real
-   fix for a borderline-phrased query rather than a permanently dead end.
-   **Execution** (parallel): the queued calls run through a small bounded `ThreadPoolExecutor`
-   (`MAX_PARALLEL_TOOLS = 3`) instead of one at a time — safe because every adapter's lazy
-   model-singleton getter is already thread-safe (`app/concurrency.py`'s `serialize_first_call`,
-   which only locks the get-or-build step, not inference itself — and it is ONE process-wide
-   re-entrant lock, not one per getter: transformers' lazy imports aren't thread-safe, and the first
-   `scene_description` request after a restart, which builds the grounding detector and the captioner
-   in parallel threads, failed live with "Could not import module 'AutoProcessor'" until every getter
-   shared a lock), and `ThreadPoolExecutor.map`
-   preserves input order regardless of which tool finishes first, so the trace/`tool_results` stay
-   deterministic. Then `confidence.py` combines per-tool scores → **`answer_composer.py` phrases the
-   answer** → `execution_trace.py` builds the
-   spec-required auditable summary (`selected_task`, `tools_used` incl. `checkpoint_id`,
-   `confidence`, `warnings`, `timestamp`) from what actually ran, never from the LLM's own claims.
-   Rejects only when there's neither an image nor a location at all — otherwise even a
-   location-only or image-only query is valid. `QueryResult.tool_results: list[ToolResult]` carries
-   every executed tool's full `ToolResult` (not just the trace's lean audit fields) through to the
-   API layer — see the `ToolResultOut`/`tool_results` note below.
+   forced_tool_calls=None)`) — a bounded **agentic loop** over rounds of resolution + parallel
+   execution (rewritten 2026-09-23 from a strictly one-shot version — see the dedicated section
+   below for the full story). Each round: **Resolution** (sequential) — LLM tool selection (or, if
+   `forced_tool_calls` is given — the UI's manual "Advanced" picker bypasses `select_tools()`
+   entirely and never loops — exactly those calls, one round only) → compatibility check (one retry
+   *total across the whole query*, not per round, on mismatch, then a structured skip-with-warning,
+   never a crash) → compatible calls are queued, not run yet. Round 1's **empty first selection
+   also gets one retry** (LLM-selection path only): tool-calling is probabilistic, confirmed live —
+   "will it burn, past 1000 days" against the real Groq-backed orchestrator declined to call
+   anything once, then routed correctly to `wildfire_detection` on an identical retry.
+   **Execution** (parallel *within* a round): the queued calls run through a small bounded
+   `ThreadPoolExecutor` (`MAX_PARALLEL_TOOLS = 3`) instead of one at a time — safe because every
+   adapter's lazy model-singleton getter is already thread-safe (`app/concurrency.py`'s
+   `serialize_first_call`, which only locks the get-or-build step, not inference itself — and it is
+   ONE process-wide re-entrant lock, not one per getter: transformers' lazy imports aren't
+   thread-safe, and the first `scene_description` request after a restart, which builds the
+   grounding detector and the captioner in parallel threads, failed live with "Could not import
+   module 'AutoProcessor'" until every getter shared a lock), and `ThreadPoolExecutor.map` preserves
+   input order regardless of which tool finishes first, so each round's slice of `executed` — and
+   everything downstream (the trace, `tool_results`) — stays deterministic. Then `confidence.py`
+   combines per-tool scores → **`answer_composer.py` phrases the answer** → `execution_trace.py`
+   builds the spec-required auditable summary (`selected_task`, `tools_used` incl. `checkpoint_id`
+   and now which **`round`** called it, `confidence`, `warnings`, `timestamp`) from what actually
+   ran, never from the LLM's own claims. Rejects only when there's neither an image nor a location
+   at all — otherwise even a location-only or image-only query is valid.
+   `QueryResult.tool_results: list[ToolResult]` carries every executed tool's full `ToolResult`
+   (not just the trace's lean audit fields) through to the API layer — see the
+   `ToolResultOut`/`tool_results` note below.
 5. **`specialists/`** — thin adapters (`grounding_adapter.py`, `water_segmentation_adapter.py`,
    `groundwater_adapter.py`) that expose a callable as a `ToolSpec`. Image-based adapters load the
    `models/*/` wrapper scripts via `_loader.py` (file-path import — `models/` isn't a Python
@@ -149,6 +150,98 @@ decision (tool selection):
    `build_default_registry()` — no controller changes.** `specialists/__init__.py` also exposes a
    `DEFAULT_REGISTRY` module-level singleton (built once, since registration is metadata-only) that
    both `routes_query.py` and `routes_tools.py` import, instead of each constructing its own.
+
+**The routing prompt was rewritten and the controller became a real multi-round agentic loop
+(2026-09-23)**, after the user reported three concrete problems and asked for the actual reason —
+not a guess, so the diagnosis came from reading `controller.py`, both `llm_providers/*.py`, and
+`tool_registry.py` in full before answering, and this environment's own `.env` was checked to
+confirm which provider is actually configured here (`LLM_PROVIDER=groq`, `openai/gpt-oss-120b` —
+Gemini is only `.env.example`'s default). The diagnosis, confirmed by reading the code rather than
+assumed:
+1. *"Can't understand which tool to call on vague or long queries"* and 2. *"struggles to call
+   multiple appropriate tools"* were a **prompt problem, not a model problem** — the old
+   `SYSTEM_PROMPT` (`llm_providers/gemini_provider.py`, shared verbatim by both providers) was four
+   generic sentences with no guidance on ambiguity, no instruction to decompose a compound query
+   into multiple calls, and no examples; the tool descriptions alone carried the entire weight of
+   routing quality, unevenly.
+3. *"Can't work in loops — call a tool, use its output, call another tool, verify the answer"* was
+   **architectural, not fixable by prompting at all**: `handle_query` called `select_tools()`
+   exactly once (twice only for the narrow empty/incompatible retries, both blind to any tool
+   output, since no tool had run yet), executed everything in one parallel batch, and composed one
+   answer. The code's own comment said why: *"Independent specialists (none reads another's output)
+   run concurrently"* — the whole design assumed tools never depend on each other's results, which
+   made genuine multi-step reasoning structurally impossible regardless of model quality.
+
+**Fix 1 — the prompt** (`llm_providers/gemini_provider.py::SYSTEM_PROMPT`, shared by both
+providers): rewritten from 4 sentences to explicit, numbered guidance grounded in the real 9 tools —
+read each tool's own "prefer me / use X instead" language before choosing; decompose a query with
+more than one distinct ask into a call for each part; a broad "describe/what's here" query with no
+specific ask means `scene_description`; when genuinely unsure, still call the closest match rather
+than nothing (the trace stays auditable either way); and — new, since this round also added
+history — once earlier results are visible, a thin, low-confidence, or self-flagged-unreliable
+result should get a follow-up from a better-suited tool (e.g. `scene_description`'s caption-based
+building count is a guess, `land_cover_analysis`'s is the real count) rather than being accepted as
+final. `format_routing_prompt()` (`llm_providers/base.py`) builds the shared per-call content (query
++ input summary + an optional "what's already been found" block) so the two providers can never
+silently diverge in wording.
+
+**Fix 2 — the agentic loop** (`controller.py`, `MAX_AGENT_ROUNDS = 4`): `LLMProvider.select_tools()`
+gained a `history: str = ""` parameter — empty on round 1, and from round 2 on set to
+`answer_composer.build_evidence(executed_so_far, [])`, the *same* evidence formatting the final
+answer is composed from, so "what the model can react to" and "what the answer is grounded in" are
+never two different representations. `handle_query` now loops rounds instead of resolving once:
+each round asks again with the growing history, and the loop ends the moment a round proposes
+nothing genuinely new — either an empty list, or every proposed call already matches one that ran
+(checked by a JSON-serialized `(tool_name, arguments)` key, not `tuple(sorted(items()))`, so a
+future tool with a list/dict-valued parameter still hashes fine even though none does today). That
+"propose nothing new" condition *is* the finish signal — no separate pseudo-tool was added, since
+letting the model call a fake `finish` function is exactly the kind of extra surface a small model
+can get creative with (see the bug below). Each executed tool's `round` number is threaded through
+to the trace (`ExecutionTrace.tools_used[i]["round"]`, `ToolUsage.round` in the API schema and the
+frontend's `client.ts` type — additive, not rendered specially in the UI yet) so the audit trail
+honestly shows multi-step reasoning, not just a longer flat list. A single-tool query still resolves
+in one round and behaves identically to before, **with one deliberate, documented cost**: it now
+always costs at least two LLM calls instead of one — the pick, then a round-2 check that comes back
+empty — because skipping that check-in on some cheap heuristic guess would be exactly the shortcut
+that stops the loop from noticing when a follow-up genuinely would help. Routing calls are fast next
+to what most specialists themselves cost, so this was accepted deliberately rather than optimized
+away. `forced_tool_calls` (the manual picker) is completely unaffected — it never calls
+`select_tools()` and always runs exactly one round.
+
+**A real bug, found only by testing against the live model, not by reasoning about the design**:
+Groq's `openai/gpt-oss-120b` sometimes invents a fake tool call named `"none"` (arguments
+`{"result": "final"}`) to signal "I'm done," instead of returning zero tool calls as instructed —
+the Groq API itself then rejects this (400, `"tool 'none' not in request.tools"`), which
+`groq_provider.py` normalizes to a `RuntimeError` like any other provider failure. Round 1's own
+`select()` failing legitimately has nothing to fall back on and still blocks the query (unchanged,
+documented behavior) — but this exception was happening on the **optional round-2+ check-in**,
+where round 1 had *already* produced a perfectly good answer; letting it propagate turned a working
+query into a bare 503 over a refinement step that was never required. Found live: "how much water
+is in this image?" — a plainly single-tool query — 503'd. Fixed by wrapping only the round ≥ 2
+history-based `select()` call in `try/except Exception: break` — a failed check-in silently keeps
+whatever was already found (and, deliberately, is never added to `warnings`, since it says nothing
+about round 1's own reliability and would otherwise incorrectly lower the reported confidence in an
+answer that's actually fine). Covered by
+`test_round2_provider_failure_keeps_round1s_answer_instead_of_crashing`, which reproduces the exact
+"none" scenario with a stub provider.
+
+**Verified live against the real orchestrator, not just mocked tests** (`backend/tests/
+test_orchestrator.py` gained `SequencedStubProvider` — returns a different call list each
+successive call and records what `history` it was shown — plus 6 new tests: genuine round-2
+follow-up with real history content, natural stop-on-empty, the round cap, `forced_tool_calls`
+never entering round 2, and the crash-resilience regression above; two pre-existing tests'
+`call_count` assertions went from 2 to 3 once the round-2 check-in became real). Then, separately,
+three live queries against the real running app with a real uploaded image confirmed the same
+things hold outside a mock: **"Describe this image, and give me a precise, reliable count of the
+buildings"** → round 1 `scene_description`, round 2 `land_cover_analysis` (exactly the caption-count-
+is-a-guess rule from the prompt rewrite), and the composed answer genuinely merged both — *"the
+segmentation model estimates buildings cover about 28%... roughly 42 separate building outlines...
+because touching structures are merged, this figure is a lower bound."* **"tell me about this
+place"** (deliberately vague) → correctly routed to `scene_description` alone, stopped after round 1
+since that tool's own three internal sources already gave a full answer. **"How much water is in
+this image?"** → correctly stayed to one round and returned in ~5s (not the ~45-80s the two-round
+queries took), confirming the loop doesn't pay for a second round of *tool execution* when nothing
+more was proposed — only the one extra (fast, text-only) routing call.
 
 **The answer is phrased by the LLM from the tools' own outputs, not just joined**
 (`orchestrator/answer_composer.py`, added 2026-09-20 after a user tried "how many aeroplanes do you

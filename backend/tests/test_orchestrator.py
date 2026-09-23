@@ -1,8 +1,8 @@
-from app.orchestrator.controller import handle_query
+from app.orchestrator.controller import MAX_AGENT_ROUNDS, handle_query
 from app.orchestrator.llm_providers.base import LLMProvider, ToolCall
 from app.orchestrator.tool_registry import LatLon, QueryInput, ToolRegistry, ToolResult, ToolSpec
 from app.specialists import build_default_registry
-from tests.conftest import StubProvider
+from tests.conftest import SequencedStubProvider, StubProvider
 
 
 def test_routes_to_correct_tool(sample_image):
@@ -131,7 +131,7 @@ def test_execution_trace_has_required_fields(sample_image):
 
     assert trace.selected_task == "water_body_segmentation"
     assert trace.tools_used == [
-        {"name": "water_body_segmentation", "params": {}, "checkpoint_id": "water_body_unet_final.pt"}
+        {"name": "water_body_segmentation", "params": {}, "checkpoint_id": "water_body_unet_final.pt", "round": 1}
     ]
     assert "1 image(s)" in trace.input_summary
     assert 0.0 <= trace.confidence <= 1.0
@@ -191,7 +191,7 @@ def test_retry_does_not_reexecute_an_already_succeeded_tool(sample_image):
         def __init__(self):
             self.call_count = 0
 
-        def select_tools(self, query, tool_specs, input_summary):
+        def select_tools(self, query, tool_specs, input_summary, history=""):
             self.call_count += 1
             if self.call_count == 1:
                 return [
@@ -206,7 +206,11 @@ def test_retry_does_not_reexecute_an_already_succeeded_tool(sample_image):
 
     result = handle_query("water and groundwater?", QueryInput(images=[sample_image]), provider, registry)
 
-    assert provider.call_count == 2  # confirms the retry path was actually exercised
+    # 2 calls resolve round 1 (initial selection + the incompatible-tool retry); a 3rd is the
+    # agentic loop's own round-2 check-in ("does anything more help now?", see controller.py's
+    # module docstring) -- the provider's blanket "not the first call" branch re-suggests
+    # water_body_segmentation again, which the loop's dedup correctly drops since it already ran.
+    assert provider.call_count == 3
     assert len(result.trace.tools_used) == 1
     assert result.trace.tools_used[0]["name"] == "water_body_segmentation"
 
@@ -360,7 +364,7 @@ def test_empty_first_selection_gets_one_retry_and_can_recover(sample_image):
         def __init__(self):
             self.call_count = 0
 
-        def select_tools(self, query, tool_specs, input_summary):
+        def select_tools(self, query, tool_specs, input_summary, history=""):
             self.call_count += 1
             if self.call_count == 1:
                 return []
@@ -371,7 +375,10 @@ def test_empty_first_selection_gets_one_retry_and_can_recover(sample_image):
 
     result = handle_query("vague query", QueryInput(images=[sample_image]), provider, registry)
 
-    assert provider.call_count == 2  # confirms the retry path was actually exercised
+    # 2 calls resolve round 1 (decline, then the empty-selection retry that picks a tool); a 3rd is
+    # the agentic loop's round-2 check-in, which the provider answers with the same call again --
+    # already executed, so the loop's dedup drops it and stops (see controller.py's module docstring).
+    assert provider.call_count == 3
     assert result.trace.selected_task == "water_body_segmentation"
     assert result.trace.warnings == []
 
@@ -384,7 +391,7 @@ def test_still_empty_after_retry_is_a_clean_no_match_not_a_crash(sample_image):
         def __init__(self):
             self.call_count = 0
 
-        def select_tools(self, query, tool_specs, input_summary):
+        def select_tools(self, query, tool_specs, input_summary, history=""):
             self.call_count += 1
             return []
 
@@ -411,3 +418,109 @@ def test_forced_empty_tool_list_is_not_retried(sample_image):
 
     assert result.trace.selected_task == "unclassified"
     assert result.trace.tools_used == []
+
+
+# --- the agentic loop (multi-round routing, controller.py's module docstring) -------------------
+
+
+def test_second_round_runs_a_different_tool_informed_by_the_first(sample_image):
+    """The core new behaviour: round 2 is not just "ask again for luck" -- a provider that
+    genuinely changes its answer once it can see round 1's result must have that result actually
+    reach it, and the second tool must actually run and land in the same trace."""
+    registry = build_default_registry()
+    provider = SequencedStubProvider(
+        [
+            [ToolCall(tool_name="water_body_segmentation", arguments={})],
+            [ToolCall(tool_name="land_cover_analysis", arguments={})],
+        ]
+    )
+
+    result = handle_query(
+        "how much water, and what's the land cover?", QueryInput(images=[sample_image]), provider, registry
+    )
+
+    names = [t["name"] for t in result.trace.tools_used]
+    assert names == ["water_body_segmentation", "land_cover_analysis"]
+    assert [t["round"] for t in result.trace.tools_used] == [1, 2]
+    # round 2's call must have actually been given round 1's real result to react to, not an empty
+    # or placeholder history -- checked against SequencedStubProvider's own record of what it saw.
+    assert provider.history_seen[0] == ""  # round 1 has nothing to look back on yet
+    assert "water_body_segmentation" in provider.history_seen[1] or "water" in provider.history_seen[1].lower()
+
+
+def test_loop_stops_when_second_round_finds_nothing_more_to_add(sample_image):
+    """A provider that looks at history and decides it has enough (returns []) ends the query right
+    there -- this is how "finished" is signalled, not a special pseudo-tool."""
+    registry = build_default_registry()
+    provider = SequencedStubProvider([[ToolCall(tool_name="water_body_segmentation", arguments={})], []])
+
+    result = handle_query("how much water is here?", QueryInput(images=[sample_image]), provider, registry)
+
+    assert len(result.trace.tools_used) == 1
+    assert len(provider.history_seen) == 2  # it really was asked a second time, and chose to stop
+
+
+def test_loop_is_capped_and_never_runs_the_same_call_twice(sample_image):
+    """A provider that never naturally stops (always proposes one more distinct call) is still
+    bounded by MAX_AGENT_ROUNDS -- and, separately, a provider that just repeats an already-executed
+    call doesn't get it re-run (covered by the two regression tests above this section already
+    passing with the loop in place; this test isolates the round-cap specifically)."""
+    registry = build_default_registry()
+    # One more round's worth of distinct calls than the cap allows -- each a genuinely different
+    # call (a different threshold), so none of them get dropped by the dedup filter.
+    rounds = [[ToolCall(tool_name="water_body_segmentation", arguments={"threshold": t})] for t in (0.1, 0.2, 0.3, 0.4, 0.5)]
+    provider = SequencedStubProvider(rounds)
+
+    result = handle_query("water, keep checking", QueryInput(images=[sample_image]), provider, registry)
+
+    assert len(result.trace.tools_used) == MAX_AGENT_ROUNDS
+    assert [t["round"] for t in result.trace.tools_used] == list(range(1, MAX_AGENT_ROUNDS + 1))
+
+
+def test_forced_tool_calls_never_enter_a_second_round(sample_image):
+    """The UI's manual "Advanced" picker is an explicit, one-shot choice -- even against a provider
+    that would keep proposing more forever, forced_tool_calls runs exactly one round because
+    select_tools() is never called at all on this path (see the module docstring)."""
+    registry = build_default_registry()
+    provider = SequencedStubProvider([[ToolCall(tool_name="land_cover_analysis", arguments={})]])
+
+    result = handle_query(
+        "irrelevant text",
+        QueryInput(images=[sample_image]),
+        provider,
+        registry,
+        forced_tool_calls=[ToolCall(tool_name="water_body_segmentation", arguments={})],
+    )
+
+    assert [t["name"] for t in result.trace.tools_used] == ["water_body_segmentation"]
+    assert provider.history_seen == []  # select_tools was never called on the forced path
+
+
+def test_round2_provider_failure_keeps_round1s_answer_instead_of_crashing(sample_image):
+    """Found live, not hypothesized: Groq's gpt-oss-120b sometimes invents a fake tool call named
+    "none" to signal "I'm done" instead of returning zero calls, and the SDK raises on that (a real
+    400 from the API, "tool 'none' not in request.tools"). A round >= 2 check-in failing must not
+    take an already-successful round 1 down with it -- round 1's real answer should still come back,
+    not a 503."""
+
+    class FailsOnSecondCallProvider(LLMProvider):
+        def __init__(self):
+            self.call_count = 0
+
+        def select_tools(self, query, tool_specs, input_summary, history=""):
+            self.call_count += 1
+            if self.call_count == 1:
+                return [ToolCall(tool_name="water_body_segmentation", arguments={})]
+            raise RuntimeError("Groq request failed: tool 'none' not in request.tools")
+
+    registry = build_default_registry()
+    provider = FailsOnSecondCallProvider()
+
+    result = handle_query("how much water is here?", QueryInput(images=[sample_image]), provider, registry)
+
+    assert provider.call_count == 2  # the round-2 check-in really was attempted, and really did fail
+    assert [t["name"] for t in result.trace.tools_used] == ["water_body_segmentation"]
+    assert result.confidence > 0.0
+    # The failed check-in says nothing about round 1's own reliability -- it must not be reported as
+    # a warning (which would incorrectly lower the confidence in an answer that is actually fine).
+    assert result.trace.warnings == []

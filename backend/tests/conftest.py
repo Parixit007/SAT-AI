@@ -169,11 +169,31 @@ def exif_gps_tif(tmp_path: Path) -> Path:
 
 
 class StubProvider(LLMProvider):
-    """Returns a fixed, pre-scripted list of tool calls -- lets orchestrator tests assert routing
-    behavior without spending real LLM API quota."""
+    """Returns the same fixed, pre-scripted list of tool calls every time it's asked -- lets
+    orchestrator tests assert single-round routing behavior without spending real LLM API quota.
+    Ignores `history`, so under the agentic loop (controller.py) it naturally still behaves exactly
+    as a single-round provider: round 2 gets offered the identical calls again, all of which are
+    already-executed duplicates, so the loop's own dedup ends it there -- no test using this needs
+    to know the loop exists. Use SequencedStubProvider instead to test genuine multi-round behavior."""
 
     def __init__(self, calls: list[ToolCall]):
         self._calls = calls
 
-    def select_tools(self, query, tool_specs, input_summary):
+    def select_tools(self, query, tool_specs, input_summary, history=""):
         return self._calls
+
+
+class SequencedStubProvider(LLMProvider):
+    """Returns a different pre-scripted list of tool calls on each successive call -- for testing
+    the agentic loop's actual multi-round behavior (controller.py), where round 2+ should see
+    `history` reflecting what round 1 found. Returns [] once the sequence is exhausted (a clean
+    "nothing more to add" signal, matching what a real provider does when it's satisfied)."""
+
+    def __init__(self, rounds: list[list[ToolCall]]):
+        self._rounds = rounds
+        self.history_seen: list[str] = []  # what `history` looked like on each call, in order -- assert against this
+
+    def select_tools(self, query, tool_specs, input_summary, history=""):
+        self.history_seen.append(history)
+        i = len(self.history_seen) - 1
+        return self._rounds[i] if i < len(self._rounds) else []

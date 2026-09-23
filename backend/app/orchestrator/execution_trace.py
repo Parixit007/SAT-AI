@@ -28,12 +28,18 @@ def build_trace(
     confidence: float,
     confidence_bucket: str,
     warnings: list[str],
+    rounds: list[int] = None,
 ) -> ExecutionTrace:
     """`executed` is a list of (tool_result, params_passed_to_it, checkpoint_id) tuples, in the
-    order they actually ran."""
+    order they actually ran. `rounds[i]` is which agentic-loop round produced `executed[i]` (see
+    controller.handle_query) -- 1 for every entry when the caller doesn't track rounds (e.g. the
+    validation-failure path, where `executed` is always empty anyway). Additive: every entry already
+    had a stable {name, params, checkpoint_id} shape, this only adds a new key to it."""
+    if rounds is None:
+        rounds = [1] * len(executed)
     tools_used = [
-        {"name": result.tool_name, "params": params, "checkpoint_id": checkpoint_id}
-        for result, params, checkpoint_id in executed
+        {"name": result.tool_name, "params": params, "checkpoint_id": checkpoint_id, "round": round_num}
+        for (result, params, checkpoint_id), round_num in zip(executed, rounds)
     ]
     return ExecutionTrace(
         selected_task=selected_task,

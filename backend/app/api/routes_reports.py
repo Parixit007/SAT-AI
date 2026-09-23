@@ -27,7 +27,7 @@ async def get_report(query_id: str) -> Response:
         "Tools used:",
     ]
     for t in trace.tools_used:
-        lines.append(f"  - {t['name']} (checkpoint: {t.get('checkpoint_id')}, params: {t['params']})")
+        lines.append(f"  - [round {t.get('round', 1)}] {t['name']} (checkpoint: {t.get('checkpoint_id')}, params: {t['params']})")
     if trace.warnings:
         lines.append("")
         lines.append("Warnings:")

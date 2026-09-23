@@ -70,6 +70,11 @@ class ToolUsage(BaseModel):
     name: str
     params: dict[str, Any]
     checkpoint_id: Optional[str] = None
+    # Which agentic-loop round called this tool (orchestrator/controller.py's MAX_AGENT_ROUNDS loop)
+    # -- 1 for a query that only ever needed one round, higher when a later round's tool call was
+    # informed by an earlier round's own results. Default kept for schema stability, but
+    # build_trace() always sets it explicitly for every real entry.
+    round: int = 1
 
 
 class ExecutionTraceOut(BaseModel):

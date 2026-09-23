@@ -3,7 +3,7 @@
 import json
 
 from app.config import settings
-from app.orchestrator.llm_providers.base import LLMProvider, ToolCall
+from app.orchestrator.llm_providers.base import LLMProvider, ToolCall, format_routing_prompt
 from app.orchestrator.tool_registry import ToolSpec
 from app.orchestrator.llm_providers.gemini_provider import SYSTEM_PROMPT
 
@@ -17,7 +17,9 @@ class GroqProvider(LLMProvider):
         self._client = Groq(api_key=settings.groq_api_key)
         self._model = settings.groq_model
 
-    def select_tools(self, query: str, tool_specs: list[ToolSpec], input_summary: str) -> list[ToolCall]:
+    def select_tools(
+        self, query: str, tool_specs: list[ToolSpec], input_summary: str, history: str = ""
+    ) -> list[ToolCall]:
         tools = [
             {
                 "type": "function",
@@ -31,7 +33,7 @@ class GroqProvider(LLMProvider):
         ]
         messages = [
             {"role": "system", "content": SYSTEM_PROMPT},
-            {"role": "user", "content": f"Query: {query}\n\nInput summary:\n{input_summary}"},
+            {"role": "user", "content": format_routing_prompt(query, input_summary, history)},
         ]
 
         try:

@@ -134,7 +134,7 @@ def test_query_returns_503_when_llm_provider_fails(monkeypatch, sample_image):
     fixture above always monkeypatches a working StubProvider, so this never got exercised."""
 
     class BrokenProvider(LLMProvider):
-        def select_tools(self, query, tool_specs, input_summary):
+        def select_tools(self, query, tool_specs, input_summary, history=""):
             raise RuntimeError("Groq request failed (some-model): 401 unauthorized")
 
     monkeypatch.setattr(routes_query, "get_provider", lambda name: BrokenProvider())

@@ -14,13 +14,37 @@ class ToolCall:
     arguments: dict[str, Any]
 
 
+def format_routing_prompt(query: str, input_summary: str, history: str = "") -> str:
+    """The one piece of per-call content shared verbatim by both providers, so a prompt change here
+    can't accidentally diverge between them. `history` (see LLMProvider.select_tools) is blank on
+    the first round; when present it's shown as what's already been found, so the model can build on
+    it instead of re-deciding from scratch."""
+    content = f"Query: {query}\n\nInput summary:\n{input_summary}"
+    if history:
+        content += (
+            "\n\nWhat earlier tool calls in this same request already found (you may call more "
+            "tools that would still add something, or call none if this is already enough):\n"
+            f"{history}"
+        )
+    return content
+
+
 class LLMProvider(ABC):
     @abstractmethod
-    def select_tools(self, query: str, tool_specs: list[ToolSpec], input_summary: str) -> list[ToolCall]:
+    def select_tools(
+        self, query: str, tool_specs: list[ToolSpec], input_summary: str, history: str = ""
+    ) -> list[ToolCall]:
         """Given the user's query and a text summary of the validated input (image count, format,
-        modality guesses -- see input_validation.py), return the ordered list of tool calls to run.
-        Both providers receive the same text-only input_summary (not raw image bytes) so the
-        Gemini-vs-Groq comparison is measuring tool-calling quality, not vision understanding."""
+        modality guesses -- see input_validation.py), return the ordered list of tool calls to run
+        next. Both providers receive the same text-only input_summary (not raw image bytes) so the
+        Gemini-vs-Groq comparison is measuring tool-calling quality, not vision understanding.
+
+        `history` is empty on the first call. controller.py's agentic loop (see `handle_query`) can
+        call this again after running a round of tools, with `history` set to those tools' own
+        results (pre-formatted by answer_composer.build_evidence, the same formatting the final
+        answer is composed from) -- the model can use what it already learned to decide whether more
+        calls would help, and with what arguments, or call none to signal it has enough. A provider
+        that ignores `history` entirely still behaves exactly as before (single-round routing)."""
         raise NotImplementedError
 
     def generate_text(self, system: str, user: str) -> str:

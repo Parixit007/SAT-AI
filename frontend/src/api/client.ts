@@ -34,6 +34,10 @@ export interface ToolUsage {
   name: string;
   params: Record<string, unknown>;
   checkpoint_id: string | null;
+  // Which agentic-loop round called this tool (backend/app/orchestrator/controller.py's
+  // MAX_AGENT_ROUNDS loop) -- 1 unless a later round's call was informed by an earlier round's own
+  // results. Not rendered specially anywhere in the UI yet; kept honest in the type for when it is.
+  round: number;
 }
 
 export interface ExecutionTrace {

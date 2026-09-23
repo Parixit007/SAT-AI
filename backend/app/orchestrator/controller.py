@@ -1,24 +1,51 @@
 """The agentic loop. Deterministic Python owns validation, compatibility checking, execution, and
-trace-building; the LLM provider owns exactly one decision (which tool(s) to call). See
-CLAUDE.md / the plan for the full per-step rationale."""
+trace-building; the LLM provider owns exactly one *kind* of decision -- which tool(s) to call next
+-- but is allowed to make it more than once per query. See CLAUDE.md / the plan for the full
+per-step rationale.
+
+**Multi-round routing** (added 2026-09-23, replacing a strictly one-shot select-then-execute
+design): after a round of tools has actually run, `select_tools()` is called again with `history`
+set to what those tools found (the same evidence formatting the final answer is composed from --
+see `answer_composer.build_evidence`), so the model can decide whether anything more would help
+before the query is considered answered -- the same "look at what I just learned, then decide what's
+next" step a genuinely agentic assistant makes after every action, not before it. This is what lets
+a query like "how many buildings are there, and does the scene description's answer actually hold
+up?" turn into more than one tool call informed by what the first one returned, and what lets a
+thin or one-word result get a follow-up from a better-suited tool instead of just being accepted.
+It is bounded (MAX_AGENT_ROUNDS) and self-terminating (a round that proposes nothing new -- empty,
+or a repeat of an already-executed call -- ends the loop). **This check-in is not free**: even a
+query that only ever needed one tool now costs at least two LLM calls instead of one (the pick, then
+the "does anything more help?" check that comes back empty) -- accepted deliberately, since routing
+calls are fast next to what most specialists themselves cost, and skipping the check-in on some
+cheap heuristic guess would be exactly the kind of shortcut that stops the loop from noticing when
+more genuinely would help. The manual "Advanced" tool picker (`forced_tool_calls`) is unaffected: it
+is an explicit, one-shot user choice and never loops."""
 
 import concurrent.futures
+import json
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
 
 from app.config import settings
-from app.orchestrator.answer_composer import compose_answer
+from app.orchestrator.answer_composer import build_evidence, compose_answer
 from app.orchestrator.confidence import combine_confidence
 from app.orchestrator.execution_trace import ExecutionTrace, build_trace
 from app.orchestrator.input_validation import validate_images
 from app.orchestrator.llm_providers.base import LLMProvider, ToolCall
 from app.orchestrator.tool_registry import QueryInput, ToolRegistry, ToolResult, ToolSpec
 
-# Caps how many specialists run concurrently for one query (see the parallel-execution block in
+# Caps how many specialists run concurrently *within one round* (see the parallel-execution block in
 # handle_query below) -- not unbounded, since CLAUDE.md documents three resident models as already
 # tight on a 16GB machine and concurrent inference adds transient memory pressure on top of that.
 MAX_PARALLEL_TOOLS = 3
+
+# Caps how many rounds of tool calls one query can go through (see the module docstring). Not a
+# tuning knob to reach for lightly: raising it lets a query that genuinely needs more steps go
+# further, but also raises the worst-case latency/cost of a query that never naturally terminates.
+# 4 rounds already allows up to MAX_PARALLEL_TOOLS x 4 = 12 tool invocations for one query, against
+# a registry of 9 tools -- generous for anything this app's tools can actually chain into today.
+MAX_AGENT_ROUNDS = 4
 
 
 @dataclass
@@ -122,86 +149,126 @@ def handle_query(
     # lowers the reported confidence, and swapping in the right tool says nothing against the analysis.
     redirect_notes: list[str] = []
 
-    def select(query: str) -> list[ToolCall]:
-        calls, notes = _redirect_calls(llm_provider.select_tools(query, tool_specs, input_summary), registry)
+    def select(query: str, history: str = "") -> list[ToolCall]:
+        calls, notes = _redirect_calls(llm_provider.select_tools(query, tool_specs, input_summary, history), registry)
         redirect_notes.extend(n for n in notes if n not in redirect_notes)
         return calls
 
-    # A caller can bypass the LLM's own tool choice entirely (e.g. the UI's manual "Advanced"
-    # picker) by passing forced_tool_calls -- everything downstream (compatibility checks,
-    # execution, trace, tool_results) treats it identically to an LLM-selected list.
-    tool_calls = forced_tool_calls if forced_tool_calls is not None else select(query_text)
-
-    # Tool-calling is probabilistic, not deterministic -- an LLM can decline to call anything on a
-    # borderline-phrased query and then call the right tool on an identical retry (confirmed live:
-    # "will it burn, past 1000 days" against wildfire_detection, whose own description already
-    # covers "fire risk"/"burning"). A forced_tool_calls=[] is a deliberate "run nothing" request
-    # from the UI's manual picker, not a failure, so only retry the LLM-selection path.
-    if forced_tool_calls is None and not tool_calls:
-        retry_query = (
-            f"{query_text}\n\nNote: no tool seemed to match on the first pass. Reconsider each "
-            f"tool's description once more -- if the query is even loosely related to what a tool "
-            f"does, call it rather than declining."
-        )
-        tool_calls = select(retry_query)
-
     executed: list[tuple[ToolResult, dict, Optional[str]]] = []
+    rounds: list[int] = []  # rounds[i] is which round produced executed[i] -- for the trace only
     skip_warnings: list[str] = []
-    retried = False
-    to_run: list[tuple[ToolCall, ToolSpec]] = []
-    i = 0
-    while i < len(tool_calls):
-        call = tool_calls[i]
-        spec = registry.get(call.tool_name)
+    incompatible_retried = False  # one retry total across the whole query, not one per round
 
-        if spec is None:
-            skip_warnings.append(f"Requested unknown tool '{call.tool_name}'; skipped.")
-            i += 1
-            continue
-
-        incompatible_reason = spec.is_compatible(query_input, validation.modalities)
-        if incompatible_reason:
-            if not retried:
-                retried = True
+    for round_num in range(1, MAX_AGENT_ROUNDS + 1):
+        if forced_tool_calls is not None:
+            # The UI's manual "Advanced" picker bypasses select_tools() entirely -- an explicit,
+            # one-shot user choice, never subject to the agentic loop below (see the module docstring).
+            tool_calls = forced_tool_calls
+        elif round_num == 1:
+            tool_calls = select(query_text)
+            # Tool-calling is probabilistic, not deterministic -- an LLM can decline to call anything
+            # on a borderline-phrased query and then call the right tool on an identical retry
+            # (confirmed live: "will it burn, past 1000 days" against wildfire_detection, whose own
+            # description already covers "fire risk"/"burning"). Round-1-only: from round 2 on, an
+            # empty proposal means "I have enough" (see below), not "reconsider."
+            if not tool_calls:
                 retry_query = (
-                    f"{query_text}\n\nNote: the tool '{call.tool_name}' is not usable here "
-                    f"({incompatible_reason}). Pick a different, compatible tool, or none."
+                    f"{query_text}\n\nNote: no tool seemed to match on the first pass. Reconsider each "
+                    f"tool's description once more -- if the query is even loosely related to what a tool "
+                    f"does, call it rather than declining."
                 )
-                retry_calls = select(retry_query)
-                # Keep the prefix already processed (successes and skips before index i) exactly as
-                # it is; only the still-unprocessed remainder gets replaced. Without this, resetting
-                # i to 0 over a brand-new full list let a tool that already ran successfully get
-                # re-selected and re-executed, duplicating it in the trace -- also drop anything the
-                # retry re-suggests that's already queued in `to_run`, as a second line of defense.
-                # (Checked against `to_run`, not `executed`: execution now happens in one batch
-                # after resolution finishes, so nothing has "executed" yet at retry time -- what
-                # must not be re-suggested is anything already resolved as compatible-and-queued.)
-                already_queued = {queued_call.tool_name for queued_call, _ in to_run}
-                tool_calls = tool_calls[:i] + [c for c in retry_calls if c.tool_name not in already_queued]
+                tool_calls = select(retry_query)
+        else:
+            # Give the model what earlier rounds actually found (the same evidence formatting the
+            # final answer is composed from) and let it decide whether more calls would still help.
+            # Unlike round 1's own select() (whose failure legitimately blocks the whole query --
+            # there is nothing to fall back on yet), a round >= 2 check-in is optional refinement on
+            # top of an already-successful round 1: if it fails, that says nothing about the
+            # reliability of what's already been found, so it stops the loop instead of discarding a
+            # good answer. Found live, not hypothesized: Groq's gpt-oss-120b sometimes invents a
+            # fake tool named "none" to signal "I'm done" instead of returning zero calls, which the
+            # API itself rejects (400, "tool 'none' not in request.tools") -- surfacing that as a 503
+            # would have thrown away a perfectly good round-1 answer over an optional follow-up check.
+            try:
+                history = build_evidence(executed, [])
+                tool_calls = select(query_text, history)
+            except Exception:
+                break
+
+        # Never re-run a call already executed in an earlier round -- both a correctness guard (an
+        # LLM or a naive caller re-proposing the same thing shouldn't duplicate work or evidence) and
+        # the loop's own termination signal: once every proposed call is a repeat, there is nothing
+        # new left to do. Keyed by JSON (not e.g. tuple(sorted(items()))) so an argument value that
+        # happens to be a list/dict some future tool takes still hashes fine -- every parameter in
+        # every schema today is a plain string/number, but this doesn't assume that stays true.
+        def _call_key(name: str, arguments: dict) -> str:
+            return name + "\0" + json.dumps(arguments, sort_keys=True, default=str)
+
+        already_ran = {_call_key(r.tool_name, p) for r, p, _ in executed}
+        tool_calls = [c for c in tool_calls if _call_key(c.tool_name, c.arguments) not in already_ran]
+        if not tool_calls:
+            break  # nothing new proposed this round -- the natural way the loop ends
+
+        to_run: list[tuple[ToolCall, ToolSpec]] = []
+        i = 0
+        while i < len(tool_calls):
+            call = tool_calls[i]
+            spec = registry.get(call.tool_name)
+
+            if spec is None:
+                skip_warnings.append(f"Requested unknown tool '{call.tool_name}'; skipped.")
+                i += 1
                 continue
-            skip_warnings.append(incompatible_reason)
+
+            incompatible_reason = spec.is_compatible(query_input, validation.modalities)
+            if incompatible_reason:
+                if not incompatible_retried:
+                    incompatible_retried = True
+                    retry_query = (
+                        f"{query_text}\n\nNote: the tool '{call.tool_name}' is not usable here "
+                        f"({incompatible_reason}). Pick a different, compatible tool, or none."
+                    )
+                    retry_calls = select(retry_query)
+                    # Keep the prefix already processed (successes and skips before index i) exactly as
+                    # it is; only the still-unprocessed remainder gets replaced. Without this, resetting
+                    # i to 0 over a brand-new full list let a tool that already ran successfully get
+                    # re-selected and re-executed, duplicating it in the trace -- also drop anything the
+                    # retry re-suggests that's already queued in `to_run`, as a second line of defense.
+                    # (Checked against `to_run`, not `executed`: this round's execution hasn't happened
+                    # yet at retry time -- what must not be re-suggested is anything already resolved
+                    # as compatible-and-queued this round.)
+                    already_queued = {queued_call.tool_name for queued_call, _ in to_run}
+                    tool_calls = tool_calls[:i] + [c for c in retry_calls if c.tool_name not in already_queued]
+                    continue
+                skip_warnings.append(incompatible_reason)
+                i += 1
+                continue
+
+            to_run.append((call, spec))
             i += 1
-            continue
 
-        to_run.append((call, spec))
-        i += 1
+        if not to_run:
+            break  # everything proposed this round was unknown/incompatible -- nothing left to run
 
-    # Independent specialists (none reads another's output) run concurrently instead of paying
-    # each one's latency serially -- safe because every adapter's lazy model-singleton getter is
-    # already thread-safe (app/concurrency.py's serialize_first_call), and that lock only guards
-    # getting-or-building the model, not the inference call itself. `pool.map` yields results in
-    # input order (not completion order), so `executed`'s ordering -- and everything downstream
-    # that depends on it (the trace, tool_results) -- stays deterministic regardless of which
-    # tool actually finishes first.
-    if to_run:
+        # Independent specialists (none reads another's output *within a round*) run concurrently
+        # instead of paying each one's latency serially -- safe because every adapter's lazy
+        # model-singleton getter is already thread-safe (app/concurrency.py's serialize_first_call),
+        # and that lock only guards getting-or-building the model, not the inference call itself.
+        # `pool.map` yields results in input order (not completion order), so this round's slice of
+        # `executed` -- and everything downstream that depends on it (the trace, tool_results) --
+        # stays deterministic regardless of which tool actually finishes first.
         with concurrent.futures.ThreadPoolExecutor(max_workers=min(len(to_run), MAX_PARALLEL_TOOLS)) as pool:
             for outcome in pool.map(lambda item: _run_tool(item, query_input), to_run):
                 if outcome[0] == "ok":
                     _, result, arguments, checkpoint_id = outcome
                     executed.append((result, arguments, checkpoint_id))
+                    rounds.append(round_num)
                 else:
                     _, name, message = outcome
                     skip_warnings.append(f"{name} failed: {message}")
+
+        if forced_tool_calls is not None:
+            break  # exactly one round for a manual override, regardless of MAX_AGENT_ROUNDS
 
     all_warnings = validation.warnings + skip_warnings
     confidences = [result.confidence for result, _, _ in executed]
@@ -230,6 +297,7 @@ def handle_query(
         confidence=confidence,
         confidence_bucket=bucket,
         warnings=trace_warnings,
+        rounds=rounds,
     )
 
     evidence_paths = [result.evidence_image_path for result, _, _ in executed if result.evidence_image_path]
