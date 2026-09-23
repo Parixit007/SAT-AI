@@ -287,21 +287,50 @@ function SceneDescriptionCard({ data, sourceImageUrl }: { data: Record<string, u
   );
 }
 
+// Stage 2's learned scene class -- present only when the optional fusion_classifier.pt checkpoint
+// is installed (backend/app/specialists/fusion_adapter.py's USE_CLASSIFIER); older responses and
+// installs without it simply omit these fields, so every access below is optional-chained.
+const FUSION_CLASS_LABEL: Record<string, string> = {
+  agri: "Agricultural",
+  barrenland: "Barren",
+  grassland: "Grassland",
+  urban: "Urban",
+};
+
 function FusionCard({ data, evidenceUrl }: { data: Record<string, unknown>; evidenceUrl: string | null }) {
   const agree = data.water_agreement === "agree";
   const waterSar = Number(data.water_fraction_sar ?? 0);
   const waterOptical = Number(data.water_fraction_optical ?? 0);
   const builtup = Number(data.builtup_fraction_sar ?? 0);
+  const learnedClass = data.land_cover_class as string | undefined;
+  const learnedConfidence = data.land_cover_confidence as number | undefined;
+  const learnedProbs = data.land_cover_probabilities as Record<string, number> | undefined;
   return (
     <div className="tool-card-body">
       <span className={`agree-badge ${agree ? "agree" : "disagree"}`}>
         {agree ? "SAR and optical agree" : "SAR and optical disagree"}
       </span>
+      {learnedClass && (
+        <span className="fusion-class-badge">
+          Learned scene class: {FUSION_CLASS_LABEL[learnedClass] ?? learnedClass}
+          {learnedConfidence !== undefined && (
+            <span className="data-value"> ({(learnedConfidence * 100).toFixed(0)}%)</span>
+          )}
+        </span>
+      )}
       {evidenceUrl && <EvidenceImage url={evidenceUrl} />}
       <DetailToggle>
         <Bar label="Water (SAR)" value={waterSar} percent />
         <Bar label="Water (optical)" value={waterOptical} percent />
         <Bar label="Built-up (SAR-only, coarser read)" value={builtup} percent />
+        {learnedProbs && (
+          <>
+            <Bar label="Urban likelihood (learned, both modalities)" value={learnedProbs.urban} percent />
+            <Bar label="Agricultural likelihood (learned)" value={learnedProbs.agri} percent />
+            <Bar label="Grassland likelihood (learned)" value={learnedProbs.grassland} percent />
+            <Bar label="Barren likelihood (learned)" value={learnedProbs.barrenland} percent />
+          </>
+        )}
       </DetailToggle>
     </div>
   );

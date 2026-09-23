@@ -50,7 +50,10 @@ def test_routes_optical_sar_pair_to_fusion(optical_sar_pair):
 
     assert result.trace.selected_task == "optical_sar_fusion"
     assert result.trace.tools_used[0]["name"] == "optical_sar_fusion"
-    assert result.trace.tools_used[0]["checkpoint_id"] is None
+    # None for Stage 1 only, the classifier checkpoint once Stage 2 is installed -- same reasoning
+    # as change_detection above: compare against what the registry itself reports, not a hardcoded
+    # assumption that breaks the moment a developer has the (gitignored) checkpoint on disk.
+    assert result.trace.tools_used[0]["checkpoint_id"] == registry.get("optical_sar_fusion").checkpoint_id
     assert 0.0 <= result.confidence <= 1.0
 
 

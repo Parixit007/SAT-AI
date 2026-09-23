@@ -31,7 +31,7 @@ models/water_segmentation/   WaterSegmentationTool (water-body mask) -- working
 models/landcover/       LandCoverTool (OpenEarthMap U-Net: building/road/tree/water shares, building count, roof colours) -- checkpoint from Kaggle
 models/vqa/             VQATool (PaliGemma RSVQA-LR VQA) -- working, live-verified
 models/change_detection/   ChangeDetectionTool (pixel-diff, Stage 1) + SemanticChangeTool (Siamese semantic-change net, Stage 2)
-models/fusion/          FusionTool (SAR-backscatter water/built-up, Stage 1) -- working
+models/fusion/          FusionTool (SAR-backscatter water/built-up, Stage 1) + FusionClassifier (learned optical+SAR land-cover, Stage 2) -- working
 notebooks/               Kaggle training notebooks (see below)
 data/scripts/            download_{bigearthnet,vrsbench,rsvqa,cdvqa}.py + common.py
 data/raw/                downloaded datasets (gitignored)
@@ -720,19 +720,72 @@ original React/Leaflet stack — `framer-motion`, see above.
   also calls the existing `water_segmentation` tool on the optical image and reconciles the two
   independent reads — agreement raises confidence, disagreement is surfaced explicitly rather than
   averaged away (e.g. cloud-obscured optical vs. a clear SAR read is exactly the scenario the spec
-  cites SAR for). Built-up detection is SAR-only for now — no optical cross-check exists yet, and
-  SAR brightness alone can false-positive on mountainous terrain (layover/foreshortening), so it's
-  documented as the coarser of the two reads. **Stage 2 (planned)**:
-  `notebooks/kaggle_finetune_fusion_sen12.ipynb`, a small early-fusion CNN (stacked optical+SAR
-  channels) trained on the TUM SEN1-2 dataset (kaggle.com/datasets/requiemonk/
-  sentinel12-image-pairs-segregated-by-terrain, CC BY 4.0, 4 land-cover classes incl. urban),
-  added via Kaggle's "Add Input" — no download step, unlike every prior notebook. Chosen over
-  BigEarthNet-MM (the dataset actually named in the spec for general "remote-sensing adaptation")
-  since BigEarthNet-MM is ~118GB (Zenodo `10891137`, confirmed via its own API) — far beyond this
-  project's budget and Kaggle's 20GB working-directory limit; nothing in the spec requires the same
-  dataset for every specialist. The already-downloaded `data/raw/bigearthnet/` shard
-  (`download_bigearthnet.py --shard`) is Sentinel-2 (optical) only, confirmed via its own CSV
-  manifest — not usable for fusion specifically.
+  cites SAR for). Built-up detection was SAR-only until Stage 2 below (2026-09-23) — no optical
+  cross-check existed, and SAR brightness alone can false-positive on mountainous terrain (layover/
+  foreshortening).
+  **Stage 2 (`models/fusion/fusion_classifier.py`, trained 2026-09-23)** — a small early-fusion CNN:
+  optical (3ch) + SAR (1ch) stacked into a 4-channel input, a ResNet18 whose first conv is expanded
+  from 3 to 4 channels (the pretrained RGB weights kept in channels 0-2, the new SAR channel
+  initialized as their mean — a standard channel-expansion transfer trick), trained on the TUM
+  SEN1-2 dataset (kaggle.com/datasets/requiemonk/sentinel12-image-pairs-segregated-by-terrain, CC BY
+  4.0) to predict one of four broad land-cover classes (agricultural / barren / grassland / urban).
+  Its P(urban) is the actual optical cross-check for built-up-ness that didn't exist before. Chosen
+  over BigEarthNet-MM (the dataset actually named in the spec for general "remote-sensing
+  adaptation") since BigEarthNet-MM is ~118GB (Zenodo `10891137`, confirmed via its own API) — far
+  beyond this project's budget and Kaggle's 20GB working-directory limit; nothing in the spec
+  requires the same dataset for every specialist. The already-downloaded `data/raw/bigearthnet/`
+  shard (`download_bigearthnet.py --shard`) is Sentinel-2 (optical) only, confirmed via its own CSV
+  manifest — not usable for fusion specifically. **Facts checked against the real data before
+  writing the notebook** (this project's usual discipline, applied here too): layout
+  (`v_2/{agri,barrenland,grassland,urban}/{s1,s2}/ROIs<collection>_<season>_s<1|2>_<scene>_
+  p<patch>.png`, joined by filename, confirmed via the Kaggle API and the dataset's own file
+  browser), channels/size (SAR = single-channel 8-bit grayscale, optical = 3-channel RGB, both
+  256×256, opened directly), and class content by rendering and looking at real pairs from all four
+  classes — the first sampled "urban" patch looked like mostly farmland with a small building
+  cluster, which briefly looked like a mislabelling problem exactly like the captioner's old campus
+  mistake, until four more urban patches spanning the patch-number range showed dense, unambiguous
+  built-up texture with a correspondingly bright SAR signature; the first was just an edge-of-scene
+  tile. **A real methodological bug was found and fixed by the notebook's own leak-check, not by
+  manual review**: written assuming one source scene per class (true for every one of ~10 manually
+  sampled filenames, and three probes for other plausible urban scene ids came back not-found), the
+  first real Kaggle run's own train/val-overlap assertion fired immediately ("agri: train/val patch
+  ids overlap") — turns out several classes span multiple source scenes with patch numbers that
+  restart per scene, so a split keyed on the bare patch number alone can collide two physically
+  different tiles onto both sides. Fixed by keying the split on **(scene id, patch id)** together;
+  verified against a synthetic fixture that reproduces the exact collision (two different scenes
+  each with a patch "p10") before repushing. **Real counts, once fixed: agri 6 distinct scenes,
+  barrenland 7, grassland 6, urban 13** (all discovered this way, not assumed) — 4,000 pairs/class,
+  3,400 train / 600 val each. **Real run (T4, ~57 min training across three sequential models, fp16,
+  batch 64, 15 epochs each): fusion, optical-only and SAR-only baselines were all trained with the
+  identical recipe specifically so the notebook measures whether fusion helps rather than assumes
+  it** — full validation set (2,400 pairs): **fusion 93.71% accuracy, optical-only 94.54%, SAR-only
+  85.96%**. Read honestly: fusion did NOT beat optical-only on raw 4-way accuracy (a real, if modest,
+  0.83-point gap — most of it from agri/barrenland confusion, not urban). But **for this tool's
+  actual purpose — a built-up cross-check — fusion and optical-only are effectively tied and both
+  far better than SAR-alone**: urban precision/recall were fusion 99.82%/95.00%, optical-only
+  99.49%/97.17%; P(urban) separation (mean probability on true-urban vs true-other patches) was
+  fusion 0.940/0.004, optical-only 0.970/0.006 — both excellent. The confusion matrices also gave
+  direct, quantified confirmation of the exact risk Stage 1's own docs had only asserted from
+  physics: **SAR-alone confuses barren/mountainous terrain for urban 79 of 600 times (13.2%)** —
+  fusion has zero such confusions, optical-only has 3. Shipped the actual fusion model, not the
+  higher-scoring optical-only baseline, since the tool is named `optical_sar_fusion` and its
+  contract is to use the SAR image the caller explicitly provided, not silently ignore it — and on
+  the one thing this cross-check actually needs (telling built-up from bright bare terrain), fusion
+  is as strong as optical-only and dramatically better than the SAR-only status quo it replaces.
+  **Verified end to end through the real orchestrator on real held-back SEN1-2 imagery** (not the
+  training/val set — a fresh GeoTIFF pair built from a real urban patch): the SAR-only read saw only
+  11.5% built-up-like backscatter and 24% water-like backscatter (the latter a real Stage-1 false
+  read — dense-city shadow gaps between buildings can look like water to backscatter thresholding
+  alone), while the classifier correctly called the scene "urban" at 99.98% confidence and the
+  composer surfaced the disagreement honestly ("should be treated as an approximate indication
+  rather than a precise measurement") — the exact case this cross-check was built to catch, caught
+  on a real image, not a synthetic test fixture. Checkpoint in
+  `models/fusion/checkpoints/fusion_classifier.pt` (gitignored, ~45MB); `fusion_adapter.
+  USE_CLASSIFIER` decides at import like every other optional checkpoint in this app, restart the
+  backend after installing/removing it. `backend/tests/test_specialists.py`'s
+  `fusion_stage1_only` fixture pins the two original Stage 1 tests regardless of whether a developer
+  has the checkpoint installed, and two new tests cover Stage 2's own agree/disagree text with a
+  mocked classifier.
 - **`wildfire_detection`** (`backend/app/specialists/wildfire_adapter.py` + `backend/app/gee/
   wildfire.py`) — location-based like `groundwater_potential` (`uses_images=False`,
   `requires_location=True`), not a trained model: a deterministic read of NASA FIRMS satellite
@@ -1178,6 +1231,13 @@ Settings), checkpoints downloaded from the Output tab afterward.
   the extra data did not improve real-scene gist. Outputs fetched with `--file-pattern` (`best_trainable.pt`
   116,818,862 bytes — the same tensor set as round one — plus `test_generations.json` and
   `caption_meta.json`), rebuilt with `rebuild_checkpoint.py`.
+- **`kaggle_finetune_fusion_sen12.ipynb`** — trains `optical_sar_fusion`'s Stage 2 (see the
+  `optical_sar_fusion` entry above in Specialist models for the full design, the real leak-check bug
+  found and fixed, and the complete real numbers including the honest fusion-vs-optical-only
+  comparison and the live end-to-end verification). Pushed as kernel
+  `parixitsinghbalot/satquery-fusion-sen12`; v1 died fast on its own train/val-overlap assertion
+  (a real bug, not a false alarm), v2 fixed the split key and ran clean. `requiemonk/
+  sentinel12-image-pairs-segregated-by-terrain` attached via Add Input, no download step.
 
 VRSBench coordinate gotcha (verified against the actual data before writing the v2 grounding
 notebook, documented in its own cell too): `[refer]` boxes in `VRSBench_train.json` are **0-100

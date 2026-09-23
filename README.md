@@ -24,7 +24,7 @@ Built for a remote-sensing AI assignment modelled on an ISRO/SAC-style evaluatio
 | **Buildings, roads, vegetation, water** — shares, building count, roof colours | `land_cover_analysis` | Working — U-Net trained on OpenEarthMap (validation mIoU 0.63) |
 | Water bodies | `water_body_segmentation` | Working — U-Net (validation IoU 0.79) |
 | Bi-temporal change ("has the built-up area increased?") | `change_detection` | Working — Siamese semantic-change net trained on SECOND-CC; pixel-differencing fallback |
-| Optical–SAR analysis | `optical_sar_fusion` | Stage 1 — SAR-backscatter physics reconciled with the optical water read (training-free) |
+| Optical–SAR analysis | `optical_sar_fusion` | Working — SAR-backscatter physics (Stage 1) + a learned optical+SAR land-cover classifier (Stage 2) as an actual built-up cross-check |
 | Groundwater potential ("should I dig a well here?") | `groundwater_potential` | Working — Google Earth Engine, weighted GIS overlay (deterministic) |
 | Active wildfire nearby | `wildfire_detection` | Working — NASA FIRMS via Earth Engine |
 | Agentic orchestration | controller | Working — LLM picks tools; everything else is deterministic Python |
@@ -32,8 +32,10 @@ Built for a remote-sensing AI assignment modelled on an ISRO/SAC-style evaluatio
 Bounds worth knowing (measured, and written up in [`CLAUDE.md`](CLAUDE.md)): the captioner was right
 in gist for 19 of 29 real scenes, partly right for 8 and wrong for 2, and its object counts are not
 trusted; building counts under-count dense blocks because touching buildings merge; the land-cover
-model mislabels shadowed streets, dune shadows and some desert terrain; the optical–SAR tool and the
-VQA model are not yet benchmarked or fine-tuned by us; there is no end-to-end benchmark harness yet.
+model mislabels shadowed streets, dune shadows and some desert terrain; the fusion classifier didn't
+beat an optical-only baseline on raw accuracy (93.7% vs 94.5%), though it matches it on the built-up
+signal this tool actually needs; the VQA model is not yet fine-tuned by us; there is no end-to-end
+benchmark harness yet.
 
 ## How a query is answered
 
@@ -118,7 +120,7 @@ an area and capture it as a georeferenced image that flows through the same path
 | `water_body_segmentation` | U-Net (ResNet-34) | Satellite Images of Water Bodies | validation IoU 0.7945 |
 | `change_detection` | Siamese semantic-change U-Net | SECOND-CC | Score 0.376; buildings direction 84% (guessing "unchanged" gets 40%) |
 | `visual_question_answering` | PaliGemma-3B | RSVQA-LR (Google's fine-tune) | not evaluated here — no held-out RSVQA-LR answers exist locally |
-| `optical_sar_fusion` | recursive Otsu on SAR + the water model | none (Stage 1) | not benchmarked |
+| `optical_sar_fusion` | recursive Otsu on SAR (Stage 1) + ResNet18 early-fusion classifier (Stage 2) | TUM SEN1-2 | 93.7% accuracy, 4 classes; urban P/R 99.8%/95.0% |
 | `groundwater_potential`, `wildfire_detection` | deterministic Earth Engine computations | none | not validated against ground truth |
 
 Every image-based tool has the same shape: a `*Tool` class in `models/<name>/` with lazy imports and one
@@ -161,8 +163,8 @@ data/scripts/           dataset download scripts
 ## Status and what's next
 
 All five mandatory capabilities have a working end-to-end implementation through the UI (change
-description and optical–SAR analysis only at a basic level); see [`CLAUDE.md`](CLAUDE.md) for the detailed
+description only at a basic level); see [`CLAUDE.md`](CLAUDE.md) for the detailed
 current-state writeup. The largest gaps against the spec are
 an end-to-end benchmark harness (VRSBench, RSVQA, CDVQA), a change-*description* model and CDVQA
-evaluation, a learned optical–SAR fusion stage and sensor-robust modality handling (e.g. a single-band
-panchromatic image is currently guessed to be SAR), any use of BigEarthNet, and our own VQA fine-tune.
+evaluation, sensor-robust modality handling (e.g. a single-band panchromatic image is currently
+guessed to be SAR), any use of BigEarthNet, and our own VQA fine-tune.

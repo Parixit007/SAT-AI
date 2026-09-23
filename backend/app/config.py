@@ -17,6 +17,7 @@ WATER_SEG_CHECKPOINT = MODELS_DIR / "water_segmentation" / "checkpoints" / "wate
 CHANGE_SEG_CHECKPOINT = MODELS_DIR / "change_detection" / "checkpoints" / "semantic_change_unet.pt"
 CAPTION_CHECKPOINT_DIR = MODELS_DIR / "captioning" / "checkpoints" / "caption_model"
 LANDCOVER_CHECKPOINT = MODELS_DIR / "landcover" / "checkpoints" / "landcover_unet.pt"
+FUSION_CLASSIFIER_CHECKPOINT = MODELS_DIR / "fusion" / "checkpoints" / "fusion_classifier.pt"
 
 
 class Settings(BaseSettings):

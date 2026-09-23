@@ -1435,7 +1435,8 @@ button:disabled {
    new hardcoded hex values for the extra groundwater/fire steps. */
 .gw-badge,
 .fire-badge,
-.agree-badge {
+.agree-badge,
+.fusion-class-badge {
   display: inline-flex;
   align-self: flex-start;
   font-size: 11px;
@@ -1443,6 +1444,14 @@ button:disabled {
   padding: 5px 11px;
   border-radius: 999px;
   border: 1px solid;
+}
+
+/* Informational, not a severity signal like agree/disagree or the groundwater categories -- a
+   neutral chip stating what the learned model thinks the scene is, not how good that is. */
+.fusion-class-badge {
+  color: var(--text-dim);
+  border-color: var(--glass-border);
+  background: var(--glass);
 }
 
 .gw-very-low {

@@ -6,6 +6,7 @@ follow-up), so a real accuracy check has to wait for that."""
 import pytest
 
 import app.specialists.change_detection_adapter as change_adapter
+import app.specialists.fusion_adapter as fusion_adapter
 from app.orchestrator.tool_registry import QueryInput
 from app.specialists.change_detection_adapter import TOOL_SPEC as CHANGE_DETECTION_TOOL_SPEC
 from app.specialists.change_detection_adapter import _handle as change_handle
@@ -21,6 +22,13 @@ def stage1_only(monkeypatch):
     .USE_STAGE2, fixed at import). Tests about Stage 1's own behaviour pin it off rather than
     silently passing in one environment and failing in the other."""
     monkeypatch.setattr(change_adapter, "USE_STAGE2", False)
+
+
+@pytest.fixture
+def fusion_stage1_only(monkeypatch):
+    """Same reasoning as stage1_only above, for optical_sar_fusion's own optional Stage 2
+    checkpoint (fusion_adapter.USE_CLASSIFIER)."""
+    monkeypatch.setattr(fusion_adapter, "USE_CLASSIFIER", False)
 
 
 def test_change_detection_tool_is_registered():
@@ -46,7 +54,10 @@ def test_fusion_tool_is_registered():
     assert spec.compatible_modalities == ["optical", "sar"]
     assert spec.required_modality_pair == ("optical", "sar")
     assert spec.requires_location is False
-    assert spec.checkpoint_id is None  # Stage 1 is training-free
+    # Stage 1 is training-free; Stage 2 reports its checkpoint when a developer has it installed --
+    # same "the trace must agree with what the adapter actually decided" reasoning as change_detection.
+    expected = fusion_adapter.FUSION_CLASSIFIER_CHECKPOINT.name if fusion_adapter.USE_CLASSIFIER else None
+    assert spec.checkpoint_id == expected
 
 
 def test_water_segmentation_smoke(sample_image):
@@ -94,11 +105,13 @@ def test_change_detection_reports_no_change_for_identical_images(sample_image, s
     assert result.structured_data["largest_region_bbox"] is None
 
 
-def test_fusion_detects_known_sar_regions_and_agrees_with_optical(optical_sar_pair, monkeypatch):
+def test_fusion_detects_known_sar_regions_and_agrees_with_optical(optical_sar_pair, monkeypatch, fusion_stage1_only):
     """water_segmentation's own model is mocked here (not re-tested -- test_water_segmentation_*
     already covers it) so this isolates fusion_adapter's own SAR-detection + reconciliation logic:
     the injected SAR water block is ~9% of the 100x100 image, so a mocked optical read of 10%
-    should land within WATER_AGREEMENT_TOLERANCE and report 'agree'."""
+    should land within WATER_AGREEMENT_TOLERANCE and report 'agree'. Pinned to Stage 1 (see
+    fusion_stage1_only) since Stage 2's own behaviour is covered separately below -- otherwise this
+    would silently also exercise the classifier on a machine that happens to have it installed."""
     import app.specialists.fusion_adapter as adapter
 
     optical, sar = optical_sar_pair
@@ -124,9 +137,11 @@ def test_fusion_detects_known_sar_regions_and_agrees_with_optical(optical_sar_pa
     assert result.structured_data["water_agreement"] == "agree"
     assert result.evidence_image_path is not None
     assert result.evidence_image_path.exists()
+    assert "land_cover_class" not in result.structured_data  # Stage 1 only -- see the fixture note above
+    assert "no optical cross-check yet" in result.text_summary
 
 
-def test_fusion_surfaces_disagreement_between_modalities(optical_sar_pair, monkeypatch):
+def test_fusion_surfaces_disagreement_between_modalities(optical_sar_pair, monkeypatch, fusion_stage1_only):
     import app.specialists.fusion_adapter as adapter
 
     optical, sar = optical_sar_pair
@@ -141,6 +156,66 @@ def test_fusion_surfaces_disagreement_between_modalities(optical_sar_pair, monke
 
     assert result.structured_data["water_agreement"] == "disagree"
     assert "DISAGREE" in result.text_summary
+
+
+def test_fusion_stage2_adds_learned_land_cover_class(optical_sar_pair, monkeypatch):
+    """Stage 2 active: the classifier's read is threaded into structured_data and the text. The
+    fixture's injected bright block is ~9-11% of the frame -- below the adapter's 0.15 "SAR sees
+    meaningful built-up" threshold (confirmed by the Stage 1 test above, which measures it directly)
+    -- so a mocked classification that ALSO doesn't call the scene urban should read as consistent,
+    not a disagreement (both readings agree there's no strong built-up signal here)."""
+    import app.specialists.fusion_adapter as adapter
+
+    optical, sar = optical_sar_pair
+
+    class FakeWaterTool:
+        def segment(self, image_path, threshold=0.5):
+            return {"water_fraction": 0.10, "confidence": 0.9}
+
+    class FakeClassifier:
+        def classify(self, optical_path, sar_path):
+            return {"land_cover_class": "grassland", "probabilities": {"agri": 0.05, "barrenland": 0.05, "grassland": 0.85, "urban": 0.05}, "confidence": 0.85}
+
+    monkeypatch.setattr(adapter, "_get_water_tool", lambda: FakeWaterTool())
+    monkeypatch.setattr(adapter, "USE_CLASSIFIER", True)
+    monkeypatch.setattr(adapter, "_get_classifier", lambda: FakeClassifier())
+
+    result = fusion_handle(QueryInput(images=[optical, sar]), {})
+
+    assert result.structured_data["land_cover_class"] == "grassland"
+    assert result.structured_data["land_cover_probabilities"]["grassland"] == 0.85
+    assert result.structured_data["land_cover_confidence"] == 0.85
+    assert "grassland" in result.text_summary
+    assert "consistent with the SAR-only built-up read" in result.text_summary
+    assert "no optical cross-check yet" not in result.text_summary  # Stage 2 replaces that sentence
+
+
+def test_fusion_stage2_flags_disagreement_with_sar_builtup_read(optical_sar_pair, monkeypatch):
+    """The fixture's SAR built-up signal stays below the 0.15 "meaningful" threshold (see the test
+    above), but a mocked classifier that confidently calls the scene 'urban' anyway should surface
+    that as a disagreement -- e.g. dense low-rise buildings that don't give a strong SAR double-
+    bounce return but are unambiguous in the optical image, exactly the case this cross-check
+    exists to catch (the reverse of SAR's own documented mountainous-terrain false-positive risk)."""
+    import app.specialists.fusion_adapter as adapter
+
+    optical, sar = optical_sar_pair
+
+    class FakeWaterTool:
+        def segment(self, image_path, threshold=0.5):
+            return {"water_fraction": 0.10, "confidence": 0.9}
+
+    class FakeClassifier:
+        def classify(self, optical_path, sar_path):
+            return {"land_cover_class": "urban", "probabilities": {"agri": 0.03, "barrenland": 0.02, "grassland": 0.05, "urban": 0.90}, "confidence": 0.90}
+
+    monkeypatch.setattr(adapter, "_get_water_tool", lambda: FakeWaterTool())
+    monkeypatch.setattr(adapter, "USE_CLASSIFIER", True)
+    monkeypatch.setattr(adapter, "_get_classifier", lambda: FakeClassifier())
+
+    result = fusion_handle(QueryInput(images=[optical, sar]), {})
+
+    assert result.structured_data["land_cover_class"] == "urban"
+    assert "DISAGREES with the SAR-only built-up read" in result.text_summary
 
 
 def test_grounding_smoke(sample_image):
