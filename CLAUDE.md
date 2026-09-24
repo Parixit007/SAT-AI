@@ -198,8 +198,15 @@ future tool with a list/dict-valued parameter still hashes fine even though none
 letting the model call a fake `finish` function is exactly the kind of extra surface a small model
 can get creative with (see the bug below). Each executed tool's `round` number is threaded through
 to the trace (`ExecutionTrace.tools_used[i]["round"]`, `ToolUsage.round` in the API schema and the
-frontend's `client.ts` type — additive, not rendered specially in the UI yet) so the audit trail
-honestly shows multi-step reasoning, not just a longer flat list. A single-tool query still resolves
+frontend's `client.ts` type) **and rendered** — `ExecutionTraceView.tsx` groups `tools_used` by
+round with a small "informed by earlier results" hint on round 2+, but only when a query actually
+spanned more than one round; a single-round query (the common case) still renders the exact same
+flat, unlabeled list it always did, so the trace never grows a redundant "Round 1" tag for nothing
+— verified live through the real UI, not just the build, on the same real map capture used for the
+live backend tests below: a compound query's trace showed "Round 1: scene_description" then "Round
+2 (informed by earlier results): land_cover_analysis," and a follow-up single-tool question on the
+same image rendered as a plain flat list again. So the audit trail honestly shows multi-step
+reasoning where it happened, not just a longer flat list. A single-tool query still resolves
 in one round and behaves identically to before, **with one deliberate, documented cost**: it now
 always costs at least two LLM calls instead of one — the pick, then a round-2 check that comes back
 empty — because skipping that check-in on some cheap heuristic guess would be exactly the shortcut
