@@ -1085,6 +1085,31 @@ button:disabled {
   gap: 6px;
 }
 
+/* Only rendered when a query actually took more than one agentic-loop round (controller.py) -- a
+   plain .trace-tool-list otherwise, so the common single-round case never grows an empty "Round 1"
+   label it doesn't need. */
+.trace-rounds {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.trace-round-label {
+  display: block;
+  font-family: var(--data);
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-dim);
+  margin-bottom: 6px;
+}
+
+.trace-round-hint {
+  text-transform: none;
+  letter-spacing: normal;
+  font-style: italic;
+}
+
 .trace-tool-list li {
   display: flex;
   flex-wrap: wrap;
