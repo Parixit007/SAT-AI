@@ -661,6 +661,141 @@
   background: #266aa3;
 }
 
+/* ============================== Chat history drawer ============================== */
+/* Same always-mounted / CSS-transform pattern as .map-drawer, mirrored to slide in from the left
+   edge instead -- the map drawer already owns the right edge. */
+
+.history-drawer {
+  position: fixed;
+  top: 0;
+  left: 0;
+  bottom: 0;
+  z-index: 25;
+  width: min(360px, 92vw);
+  display: flex;
+  flex-direction: column;
+  background: var(--glass-strong);
+  backdrop-filter: blur(26px) saturate(160%);
+  -webkit-backdrop-filter: blur(26px) saturate(160%);
+  border-right: 1px solid var(--glass-border);
+  box-shadow: 12px 0 40px rgba(31, 41, 82, 0.18);
+  transform: translateX(-105%);
+  transition: transform 340ms cubic-bezier(0.2, 0.8, 0.2, 1);
+  pointer-events: none;
+}
+
+.history-drawer.is-open {
+  transform: translateX(0);
+  pointer-events: auto;
+}
+
+.history-new-chat-row {
+  padding: 2px 20px 14px;
+  flex-shrink: 0;
+  border-bottom: 1px solid var(--border);
+}
+
+.history-new-chat {
+  color: var(--water);
+}
+
+.history-new-chat:hover:not(:disabled) {
+  color: var(--water);
+}
+
+.history-list {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 10px 12px 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.history-empty {
+  padding: 20px 8px;
+  font-size: 13px;
+  color: var(--text-dim);
+  text-align: center;
+}
+
+.history-row {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  border-radius: 12px;
+  padding: 2px;
+  transition: background 160ms ease;
+}
+
+.history-row:hover {
+  background: var(--glass);
+}
+
+.history-row.is-active {
+  background: var(--water-dim);
+}
+
+.history-row-main {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 3px;
+  padding: 8px 10px;
+  border: none;
+  background: transparent;
+  text-align: left;
+  border-radius: 10px;
+  cursor: pointer;
+}
+
+.history-row-title {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text-bright);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 100%;
+}
+
+.history-row-meta {
+  font-family: var(--data);
+  font-size: 11px;
+  color: var(--text-dim);
+}
+
+.history-row-delete {
+  flex-shrink: 0;
+  color: var(--text-dim);
+}
+
+.history-row-delete:hover {
+  color: var(--alert);
+  background: var(--alert-dim);
+}
+
+.history-row-confirm {
+  display: flex;
+  align-items: center;
+  gap: 0;
+  flex-shrink: 0;
+  white-space: nowrap;
+}
+
+.history-confirm-yes {
+  color: var(--alert);
+}
+
+.history-confirm-yes:hover:not(:disabled) {
+  color: var(--alert);
+  background: var(--alert-dim);
+}
+
 /* Below ~900px the centered 820px-max chat column reaches close enough to the viewport edge that
    a right-edge FAB starts overlapping real content -- the example chips in particular, since they
    wrap across the composer's full width and their row count (so their total height) varies with
@@ -701,7 +836,8 @@
     width: 48px;
     height: 48px;
   }
-  .map-drawer {
+  .map-drawer,
+  .history-drawer {
     width: 100vw;
   }
   .attach-popover {
@@ -1208,8 +1344,11 @@ button:disabled {
   transform: scale(0.94);
 }
 
-.header-clear {
+.header-actions {
   margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 8px;
 }
 
 /* ============================== Monospace data values ============================== */

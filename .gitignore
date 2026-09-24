@@ -8,9 +8,10 @@ models/*/checkpoints/
 # Datasets
 data/raw/
 
-# Runtime-generated (uploaded inputs, rendered evidence images) -- not source content
+# Runtime-generated (uploaded inputs, rendered evidence images, persistent chat history) -- not source content
 data/uploads/
 data/evidence/
+data/chat_history.db
 !data/uploads/.gitkeep
 !data/evidence/.gitkeep
 

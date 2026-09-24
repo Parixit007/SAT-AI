@@ -4,6 +4,7 @@ from pathlib import Path
 from fastapi import APIRouter, HTTPException
 from starlette.concurrency import run_in_threadpool
 
+from app import chat_store
 from app.api.web_preview import web_preview_path
 from app.config import UPLOADS_DIR, settings
 from app.orchestrator.controller import handle_query
@@ -55,6 +56,14 @@ async def run_query(payload: QueryRequest) -> QueryResponse:
         image_paths = get_input(payload.input_id)
         if image_paths is None:
             raise HTTPException(status_code=404, detail=f"Unknown input_id '{payload.input_id}'. Upload images first.")
+
+    # Fail fast on a stale/deleted chat_id -- before running a possibly-expensive query -- rather
+    # than silently starting a new chat under a name the caller never chose. A brand-new chat (no
+    # chat_id given) is only actually created once there's a real result to save it with, below --
+    # so a request that never gets that far (e.g. the 503 case right after this) never leaves an
+    # empty, entry-less chat sitting in the history list.
+    if payload.chat_id is not None and not chat_store.chat_exists(payload.chat_id):
+        raise HTTPException(status_code=404, detail=f"Unknown chat_id '{payload.chat_id}'.")
 
     forced_tool_calls = (
         [ToolCall(tool_name=t.tool_name, arguments=t.arguments) for t in payload.forced_tools]
@@ -109,8 +118,11 @@ async def run_query(payload: QueryRequest) -> QueryResponse:
         for r in result.tool_results
     ]
 
-    return QueryResponse(
+    chat_id = payload.chat_id or chat_store.create_chat(payload.query_text)
+
+    response = QueryResponse(
         query_id=query_id,
+        chat_id=chat_id,
         answer_text=result.answer_text,
         confidence=result.confidence,
         confidence_bucket=result.confidence_bucket,
@@ -118,3 +130,5 @@ async def run_query(payload: QueryRequest) -> QueryResponse:
         tool_results=tool_results_out,
         execution_trace=trace_out,
     )
+    chat_store.add_entry(chat_id, payload.query_text, response.model_dump_json())
+    return response

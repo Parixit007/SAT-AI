@@ -2,7 +2,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
-from app.api import routes_query, routes_reports, routes_tools, routes_upload
+from app.api import routes_chats, routes_query, routes_reports, routes_tools, routes_upload
 from app.config import EVIDENCE_DIR, UPLOADS_DIR, settings
 
 app = FastAPI(title="SatQuery AI Backend")
@@ -24,6 +24,7 @@ app.include_router(routes_upload.router, prefix="/api", tags=["upload"])
 app.include_router(routes_query.router, prefix="/api", tags=["query"])
 app.include_router(routes_reports.router, prefix="/api", tags=["reports"])
 app.include_router(routes_tools.router, prefix="/api", tags=["tools"])
+app.include_router(routes_chats.router, prefix="/api", tags=["chats"])
 
 
 @app.get("/api/health")

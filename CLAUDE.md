@@ -337,6 +337,59 @@ block the event loop.
 non-persistent, fine for a demo. `routes_reports.py` serves a plain-text downloadable report per
 query_id (`Content-Disposition: attachment`); a polished PDF/HTML export is future work.
 
+## Persistent chat history (`backend/app/chat_store.py`, `GET`/`DELETE /api/chats`)
+
+Added 2026-09-24 after the user asked to "give it per chat memory and history of chats, also
+option to delete past chats" — `store.py` above doesn't survive a restart and was never meant to; a
+*chat* needs to. SQLite (stdlib, no new dependency) at `data/chat_history.db` (gitignored, like
+every other runtime-generated path under `data/`) — more than enough for a single-process demo app,
+the same "small, dependency-free store" spirit as `store.py` itself.
+
+**Shape**: a chat is a title plus an ordered list of entries; each entry stores the *entire*
+`QueryResponse` a live query already returns, JSON-serialized verbatim (`chat_store.add_entry`) —
+so a history entry and a fresh result are exactly the same shape on the wire, and the frontend needs
+no second rendering path for either (`ChatEntryOut.response: QueryResponse` in `schemas/models.py`).
+`chat_store.py` opens one connection per call (`_connect()`), not a shared module-level connection:
+`routes_query.py`'s query handling runs inside `run_in_threadpool`, so concurrent requests can land
+on different threads, and a bare `sqlite3.Connection` isn't safe to share across threads — a
+short-lived connection per call is the standard, simplest way to use SQLite from a small
+multi-threaded app, and query volume here is nowhere near where that would be a real cost.
+
+**Wiring into `/api/query`** (`routes_query.py`): `QueryRequest.chat_id: Optional[str] = None` —
+omitted, the query starts a brand-new chat, titled from the query text (`chat_store.
+_title_from_query()`, collapses whitespace, truncates at 60 chars with "…"); given, it appends to
+that chat instead, 404 if the id doesn't exist. That check runs *before* the (possibly expensive)
+query executes, so a stale/deleted chat_id fails fast rather than silently starting a new chat under
+a name the caller never chose. The chat is only actually created/appended to once there's a real
+result to save — `chat_store.create_chat`/`add_entry` are the very last thing `run_query` does,
+after everything that can fail (missing input_id, a broken LLM provider) already has, so a failed
+query never leaves an empty, entry-less chat sitting in the history list. `QueryResponse.chat_id:
+str` is always populated (either the caller's own id echoed back, or the newly minted one) — the
+frontend threads it back into the next request in the same chat rather than tracking identity
+itself.
+
+**`GET /api/chats`** (`api/routes_chats.py`) — `list[ChatSummaryOut]` (id/title/created_at/
+updated_at/entry_count), most-recently-*updated* first (one `LEFT JOIN` + `GROUP BY` for the count,
+not N+1 queries). **`GET /api/chats/{id}`** — full `ChatDetailOut` with every entry's query text and
+complete `QueryResponse`, 404 if unknown. **`DELETE /api/chats/{id}`** — removes the chat and its
+entries, 404 if unknown (so a repeat delete is a clean 404, not a silent no-op). Deleting a chat
+only removes the DB rows — any evidence/upload image files its entries reference stay on disk, same
+as `store.py`'s own results always have (this app has never garbage-collected those). There is
+deliberately no separate "create chat" endpoint — a chat with zero entries isn't a useful thing to
+have sitting in the list, and creation is already a side effect of the first `/api/query` call in
+it.
+
+Tested in `backend/tests/test_chats.py`: creating via a chat-id-less query, appending via an
+existing one, the fail-fast 404 on a bogus chat_id, list/detail/delete including their 404 cases,
+and that a second delete of an already-deleted chat is still a clean 404 rather than a crash. No
+isolation fixture for the chat DB, matching this codebase's established convention for
+`UPLOADS_DIR`/`EVIDENCE_DIR` (see `test_api.py`) — every test asserts on the presence/absence of the
+specific chat_id(s) it created, never on total counts, so accumulated rows from other runs can't
+make these flaky. **Verified live**: a chat created through the real running UI was still returned
+correctly by `GET /api/chats/{id}` — full title, entry count, and the exact composed answer text —
+after actually killing and restarting the backend process (not just re-fetching), which is the one
+thing this feature exists to prove.
+
 ## Frontend (`frontend/src/`)
 
 **Report-panel layout, not a chat log** (redesigned 2026-09-17 from an earlier left/right
@@ -468,6 +521,31 @@ of reading as a technical tool rather than a conversational one. `color-scheme: 
 dark-mode toggle. Keep new UI on those tokens; icons in `components/icons.tsx` stay hand-written
 inline SVG (no icon library). `frontend/package.json` has exactly one dependency beyond the
 original React/Leaflet stack — `framer-motion`, see above.
+
+**Chat history drawer** (`components/ChatHistoryDrawer.tsx`, backed by the persistent store above)
+— a left-edge slide-in glass drawer, the mirror image of `MapDrawer` (which owns the right edge):
+the same always-mounted / CSS-transform-when-open pattern, opened by a new header icon button next
+to where "Clear" used to sit. Lists every chat (`GET /api/chats`, most-recently-active first),
+click a row to load it (`GET /api/chats/{id}`, converted into the same `QueryEntryState[]` shape a
+live session builds up — `ChatEntryOut.response` is a real `QueryResponse`, so a loaded entry
+renders through the exact same `QueryEntry`/`ResultsView`/`ToolResultCard` components as a fresh
+one, no separate "history view" to keep in sync). Delete uses a two-click inline confirm per row
+(the trash icon swaps to Delete/Cancel in place, `framer-motion`-crossfaded) rather than a native
+`window.confirm`, consistent with the rest of the app's no-native-dialog convention.
+
+`App.tsx`'s old "Clear" button (`setEntries([])`) is now "New chat" — it also resets a new
+`chatId: string | null` state to `null`, so the next query starts a fresh chat instead of silently
+appending to whatever chat was open. `chatId` is threaded through `runQuery(...)`'s new trailing
+parameter and captured from every response's own `chat_id` (covers both "this was a brand-new
+chat" and "the caller's id was echoed back" identically). Deleting the *currently open* chat from
+the drawer triggers the same reset (`onActiveChatDeleted`), so a query typed right after never gets
+sent against a chat_id that no longer exists server-side.
+
+**Known, deliberate limitation**: loading a past chat restores its Q&A history for viewing, but
+does **not** re-attach the image or re-set the location originally used — the upload response was
+never persisted anywhere (only the final `QueryResponse` is saved), so continuing a loaded chat
+with a query that needs an image/location requires re-attaching or re-picking it first, which then
+appends to the same chat like any other follow-up.
 
 ## Specialist models (`models/`)
 

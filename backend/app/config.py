@@ -11,6 +11,8 @@ MODELS_DIR = REPO_ROOT / "models"
 DATA_DIR = REPO_ROOT / "data"
 UPLOADS_DIR = DATA_DIR / "uploads"
 EVIDENCE_DIR = DATA_DIR / "evidence"
+CHAT_DB_PATH = DATA_DIR / "chat_history.db"  # persistent chat history (app/chat_store.py) -- unlike
+# store.py's in-process dicts, this is meant to survive a backend restart
 
 GROUNDING_CHECKPOINT = MODELS_DIR / "grounding" / "checkpoints" / "dior_rsvg_finetuned.pth"
 WATER_SEG_CHECKPOINT = MODELS_DIR / "water_segmentation" / "checkpoints" / "water_body_unet_final.pt"

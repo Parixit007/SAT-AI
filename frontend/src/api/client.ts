@@ -61,6 +61,7 @@ export interface ToolResultOut {
 
 export interface QueryResponse {
   query_id: string;
+  chat_id: string;
   answer_text: string;
   confidence: number;
   confidence_bucket: "High" | "Medium" | "Low";
@@ -90,6 +91,30 @@ export interface ForcedToolCall {
   arguments: Record<string, unknown>;
 }
 
+export interface ChatSummary {
+  id: string;
+  title: string;
+  created_at: string;
+  updated_at: string;
+  entry_count: number;
+}
+
+export interface ChatEntry {
+  query_text: string;
+  created_at: string;
+  // Exactly what a live query returns -- a loaded chat renders through the same ResultsView/
+  // QueryEntry components as a fresh result, no separate rendering path needed.
+  response: QueryResponse;
+}
+
+export interface ChatDetail {
+  id: string;
+  title: string;
+  created_at: string;
+  updated_at: string;
+  entries: ChatEntry[];
+}
+
 async function parseErrorDetail(response: Response): Promise<string> {
   try {
     const body = await response.json();
@@ -116,6 +141,7 @@ function assertShape(body: unknown, requiredKeys: string[], context: string): vo
 const UPLOAD_RESPONSE_KEYS = ["input_id", "images", "warnings", "errors"];
 const QUERY_RESPONSE_KEYS = [
   "query_id",
+  "chat_id",
   "answer_text",
   "confidence",
   "confidence_bucket",
@@ -164,6 +190,7 @@ export async function runQuery(
   queryText: string,
   location?: LocationIn | null,
   forcedTools?: ForcedToolCall[] | null,
+  chatId?: string | null,
 ): Promise<QueryResponse> {
   const response = await fetch(`${API_BASE}/api/query`, {
     method: "POST",
@@ -173,6 +200,7 @@ export async function runQuery(
       query_text: queryText,
       location: location ?? null,
       forced_tools: forcedTools ?? null,
+      chat_id: chatId ?? null,
     }),
   });
   if (!response.ok) throw new Error(`Query failed: ${await parseErrorDetail(response)}`);
@@ -187,6 +215,25 @@ export async function listTools(): Promise<ToolSpecOut[]> {
   const response = await fetch(`${API_BASE}/api/tools`);
   if (!response.ok) throw new Error(`Failed to load tool list: ${await parseErrorDetail(response)}`);
   return response.json();
+}
+
+// Persistent chat history (backend/app/chat_store.py) -- survives a backend restart and a browser
+// refresh, unlike the in-memory-only QueryEntryState list App.tsx builds up during one session.
+export async function listChats(): Promise<ChatSummary[]> {
+  const response = await fetch(`${API_BASE}/api/chats`);
+  if (!response.ok) throw new Error(`Failed to load chat history: ${await parseErrorDetail(response)}`);
+  return response.json();
+}
+
+export async function getChat(chatId: string): Promise<ChatDetail> {
+  const response = await fetch(`${API_BASE}/api/chats/${chatId}`);
+  if (!response.ok) throw new Error(`Failed to load chat: ${await parseErrorDetail(response)}`);
+  return response.json();
+}
+
+export async function deleteChat(chatId: string): Promise<void> {
+  const response = await fetch(`${API_BASE}/api/chats/${chatId}`, { method: "DELETE" });
+  if (!response.ok) throw new Error(`Failed to delete chat: ${await parseErrorDetail(response)}`);
 }
 
 export function evidenceImageUrl(path: string): string {

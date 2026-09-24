@@ -1,9 +1,18 @@
 import { useEffect, useRef, useState } from "react";
 import "./App.css";
-import { listTools, runQuery, type ForcedToolCall, type LocationIn, type ToolSpecOut, type UploadResponse } from "./api/client";
+import {
+  listTools,
+  runQuery,
+  type ChatDetail,
+  type ForcedToolCall,
+  type LocationIn,
+  type ToolSpecOut,
+  type UploadResponse,
+} from "./api/client";
 import { AdvancedPanel } from "./components/AdvancedPanel";
 import { CapabilitiesGallery } from "./components/CapabilitiesGallery";
-import { MapPinIcon, PaperclipIcon, SlidersIcon, TrashIcon, XIcon } from "./components/icons";
+import { ChatHistoryDrawer } from "./components/ChatHistoryDrawer";
+import { HistoryIcon, MapPinIcon, PaperclipIcon, PlusIcon, SlidersIcon, XIcon } from "./components/icons";
 import { MapDrawer } from "./components/MapDrawer";
 import { QueryBox } from "./components/QueryBox";
 import { QueryEntry, type QueryEntryState } from "./components/QueryEntry";
@@ -17,8 +26,10 @@ function App() {
   const [upload, setUpload] = useState<UploadResponse | null>(null);
   const [location, setLocation] = useState<LocationIn | null>(null);
   const [entries, setEntries] = useState<QueryEntryState[]>([]);
+  const [chatId, setChatId] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [mapOpen, setMapOpen] = useState(false);
+  const [historyOpen, setHistoryOpen] = useState(false);
   const [attachOpen, setAttachOpen] = useState(false);
   const [advancedOpen, setAdvancedOpen] = useState(false);
   const [queryText, setQueryText] = useState("");
@@ -46,7 +57,8 @@ function App() {
     setEntries((e) => [...e, { id, queryText: text, status: "pending" }]);
     setSubmitting(true);
     try {
-      const result = await runQuery(upload?.input_id ?? null, text, location, forcedTools);
+      const result = await runQuery(upload?.input_id ?? null, text, location, forcedTools, chatId);
+      setChatId(result.chat_id);
       setEntries((e) => e.map((entry) => (entry.id === id ? { id, queryText: text, status: "done", result } : entry)));
     } catch (err) {
       const error = errorMessage(err);
@@ -62,6 +74,23 @@ function App() {
 
   const handleRetry = (text: string) => {
     void runOneQuery(text);
+  };
+
+  const handleNewChat = () => {
+    setEntries([]);
+    setChatId(null);
+  };
+
+  const handleSelectChat = (detail: ChatDetail) => {
+    setEntries(
+      detail.entries.map((e) => ({
+        id: crypto.randomUUID(),
+        queryText: e.query_text,
+        status: "done" as const,
+        result: e.response,
+      })),
+    );
+    setChatId(detail.id);
   };
 
   const handleUploaded = (res: UploadResponse) => {
@@ -92,11 +121,22 @@ function App() {
           <h1>SatQuery AI</h1>
           <span className="brand-tag">Agentic analysis for remote-sensing imagery</span>
         </div>
-        {entries.length > 0 && (
-          <button className="btn btn-text header-clear" onClick={() => setEntries([])} title="Clear all entries">
-            <TrashIcon size={13} /> Clear
+        <div className="header-actions">
+          <button
+            className="btn-icon"
+            onClick={() => setHistoryOpen(true)}
+            aria-label="Chat history"
+            aria-pressed={historyOpen}
+            title="Chat history"
+          >
+            <HistoryIcon size={15} />
           </button>
-        )}
+          {entries.length > 0 && (
+            <button className="btn btn-text" onClick={handleNewChat} title="Start a new chat">
+              <PlusIcon size={13} /> New chat
+            </button>
+          )}
+        </div>
       </header>
 
       <main className="chat-main">
@@ -224,6 +264,15 @@ function App() {
         onLocationChange={setLocation}
         onClose={() => setMapOpen(false)}
         onCaptured={handleUploaded}
+      />
+
+      <ChatHistoryDrawer
+        open={historyOpen}
+        activeChatId={chatId}
+        onClose={() => setHistoryOpen(false)}
+        onSelectChat={handleSelectChat}
+        onNewChat={handleNewChat}
+        onActiveChatDeleted={handleNewChat}
       />
     </div>
   );

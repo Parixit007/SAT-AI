@@ -109,6 +109,9 @@ a text report download. Around it: a capabilities gallery on the home screen (cl
 an example query), an **Advanced** panel to pick tools manually with parameter forms generated from
 each tool's JSON schema, and a **Leaflet map** with real Esri imagery where you can drop a pin or draw
 an area and capture it as a georeferenced image that flows through the same path as an upload.
+Every query is saved to a **persistent chat history** (SQLite, survives a backend restart) — a
+history drawer lists past chats, reopens one with its full results, and deletes chats you no longer
+need.
 
 ## Specialist models
 

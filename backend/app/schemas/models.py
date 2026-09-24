@@ -64,6 +64,10 @@ class QueryRequest(BaseModel):
     # None (default) = automatic LLM tool selection, unchanged. A non-None list bypasses
     # select_tools() entirely and runs exactly these tools -- see orchestrator/controller.py.
     forced_tools: Optional[list[ForcedToolCall]] = None
+    # Append this query to an existing chat (app/chat_store.py) -- 404 if it doesn't exist, so a
+    # stale/deleted chat_id never silently starts a new chat under a name the caller didn't choose.
+    # None (default) starts a brand-new chat, titled from this query.
+    chat_id: Optional[str] = None
 
 
 class ToolUsage(BaseModel):
@@ -103,12 +107,40 @@ class ToolResultOut(BaseModel):
 
 class QueryResponse(BaseModel):
     query_id: str
+    chat_id: str  # the chat this entry was saved to -- either QueryRequest.chat_id, or a newly created one
     answer_text: str
     confidence: float
     confidence_bucket: str
     evidence_image_urls: list[str]
     tool_results: list[ToolResultOut] = []
     execution_trace: ExecutionTraceOut
+
+
+class ChatSummaryOut(BaseModel):
+    """One row in the chat-history list -- title + enough metadata to render it, not the entries
+    themselves (see ChatDetailOut for that)."""
+
+    id: str
+    title: str
+    created_at: str
+    updated_at: str
+    entry_count: int
+
+
+class ChatEntryOut(BaseModel):
+    query_text: str
+    created_at: str
+    # The *exact* QueryResponse a live query returns -- so a history entry and a fresh result need
+    # no separate rendering path on the frontend, just the same component either way.
+    response: QueryResponse
+
+
+class ChatDetailOut(BaseModel):
+    id: str
+    title: str
+    created_at: str
+    updated_at: str
+    entries: list[ChatEntryOut]
 
 
 class ToolSpecOut(BaseModel):
